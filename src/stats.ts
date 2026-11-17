@@ -24,7 +24,7 @@ export async function buildStats(db: D1Database, now = Date.now()) {
 
   const [rowsRes, appsRes, settingsRes, logsRes] = await db.batch([
     db.prepare("SELECT day, key, count, sum_ms FROM stats_daily WHERE day >= ? ORDER BY day").bind(from),
-    db.prepare("SELECT id, name, display_name, status, daily_cap FROM apps ORDER BY created_at"),
+    db.prepare("SELECT id, name, display_name, status, daily_cap FROM apps WHERE id != 'app_system_admin' ORDER BY created_at"),
     db.prepare("SELECT key, value FROM settings WHERE key LIKE 'exhausted:%'"),
     db.prepare(
       `SELECT l.created_at, l.provider, l.status, l.error, l.latency_ms, r.channel

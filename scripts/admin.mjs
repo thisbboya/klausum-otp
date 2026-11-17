@@ -25,6 +25,7 @@ const HELP = `Klausum OTP admin
   block:list
   block:add <phone|email|domain|ip> <value> [note]
   block:remove <kind> <stored value from block:list>
+  admin:totp-setup [--reset]        set up (or replace) your control-room authenticator (QR)
 
 <app> = app name (e.g. klausum-web) or id.  Env: ADMIN_TOKEN, OTP_URL.`;
 
@@ -132,6 +133,23 @@ switch (cmd) {
     await api("DELETE", `/blocklist/${encodeURIComponent(args[0])}/${encodeURIComponent(args[1])}`);
     console.log("✔ removed");
     break;
+  case "admin:totp-setup": {
+    // Creates (or with --reset, replaces) the owner's authenticator for the control room and
+    // opens a QR page to scan with Google Authenticator. The page file is deleted after 2 minutes.
+    const reset = flag("--reset");
+    const r = await api("POST", "/owner-totp/enroll", reset ? { reset: true } : {});
+    const { writeFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { exec } = await import("node:child_process");
+    const file = join(tmpdir(), `kotp-admin-qr-${Date.now()}.html`);
+    writeFileSync(file, `<!doctype html><meta charset=utf-8><title>Control-room authenticator</title><body style="font-family:system-ui;text-align:center;padding:30px"><h2>Scan with Google Authenticator</h2><div style="width:300px;margin:auto">${r.qr_svg}</div><p>Account: Klausum OTP admin:owner</p><p style="color:#888">This page deletes itself from disk in 2 minutes. Close it after scanning.</p></body>`);
+    exec(process.platform === "win32" ? `start "" "${file}"` : process.platform === "darwin" ? `open "${file}"` : `xdg-open "${file}"`);
+    console.log("✔ QR opened in your browser. Scan it, then log in at " + BASE + "/admin");
+    setTimeout(() => { try { unlinkSync(file); } catch {} }, 120_000);
+    await new Promise((res) => setTimeout(res, 120_500));
+    break;
+  }
   default:
     console.error(`✖ unknown command "${cmd}"\n`); console.log(HELP); process.exit(1);
 }

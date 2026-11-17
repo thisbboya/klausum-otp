@@ -3,12 +3,15 @@ import { admin } from "./admin";
 import { v1, cleanup } from "./routes";
 import { totp } from "./totp-routes";
 import { DASHBOARD_CSS, DASHBOARD_HTML, DASHBOARD_JS } from "./dashboard";
+import { CONTROL_HTML, CONTROL_JS } from "./control";
+import { adminLogin } from "./admin-login";
 
 export type Env = {
   DB: D1Database;
   ADMIN_TOKEN: string;
   OTP_PEPPER: string;
   TOTP_KEY: string;
+  ADMIN_EMAIL?: string;     // secret: where control-room login codes go
   EMAIL_DNS_CHECK?: string; // "off" disables the MX lookup (tests only)
   DELIVERY_MODE?: string; // "console" = tests/local only (logs codes). Never set in production.
   EMAIL_FROM: string;     // e.g. "Klausum <otp@mail.klausum.study>"
@@ -40,6 +43,11 @@ app.get("/health", (c) => c.json({ ok: true }));
 const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 app.get("/dashboard", (c) => { c.header("Content-Security-Policy", PAGE_CSP); return c.html(DASHBOARD_HTML); });
 app.get("/dashboard.js", (c) => c.body(DASHBOARD_JS, 200, { "Content-Type": "text/javascript; charset=utf-8", "Content-Security-Policy": PAGE_CSP }));
+// Control room (login: email code + authenticator). Registered BEFORE the admin API so the
+// page itself loads without auth; everything it shows comes from /admin/* with the session cookie.
+app.get("/admin", (c) => { c.header("Content-Security-Policy", PAGE_CSP); return c.html(CONTROL_HTML); });
+app.get("/control.js", (c) => c.body(CONTROL_JS, 200, { "Content-Type": "text/javascript; charset=utf-8", "Content-Security-Policy": PAGE_CSP }));
+app.route("/auth/admin", adminLogin);
 app.get("/dashboard.css", (c) => c.body(DASHBOARD_CSS, 200, { "Content-Type": "text/css; charset=utf-8", "Content-Security-Policy": PAGE_CSP }));
 app.route("/admin", admin);
 app.route("/v1/totp", totp);
