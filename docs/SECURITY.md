@@ -56,9 +56,24 @@ Every ✅ row names the test that proves it (`npm test`).
 `kotp_test_…` keys run the full flow (validation, hashing, rate limits, DB) but **never deliver** anything,
 and skip only the per-IP limit. Used for development and benchmarks. Test: `test keys (kotp_test_) …`.
 
-## Known gaps / to do
+## Control room and operations (added in Phase 11)
 
-- **Admin dashboard login** (email OTP + TOTP, HttpOnly session) — Phase 11.
-- **Key rotation with 24 h overlap**, **blocklist**, **provider on/off switches** — Phase 11.
-- **Two peppers during rotation** — Phase 11 (`docs/ROTATION.md`).
-- **Delivery receipts** (textbee webhooks → `delivered`) — when SMS goes live.
+| Rule | Status | How | Test |
+|------|--------|-----|------|
+| Control-room login needs two factors | ✅ | Email code to `ADMIN_EMAIL` (a secret, not in git) **and** owner TOTP; non-owner emails get an identical answer and no code | `admin-login.test.ts` |
+| Session cookie hardened | ✅ | `__Host-` prefix, HttpOnly, Secure, SameSite=Strict, 12 h, HMAC-signed (rotating `ADMIN_TOKEN` logs everyone out) | `cookie flags`, `tampered cookies are rejected` |
+| CSRF | ✅ | Cookie-authenticated writes must carry our own `Origin` | `CSRF: a cookie alone can't change things` |
+| A stolen session can't take over the 2nd factor | ✅ | Re-enrolling the owner authenticator needs the `ADMIN_TOKEN` itself | `a session can't replace the owner's authenticator` |
+| Key rotation / revocation | ✅ | 24 h overlap on rotate; revoke applies within 10 s (auth cache) | `admin2.test.ts` |
+| Blocklist stores no plain identifiers | ✅ | phones/emails/IPs as HMACs, masked labels only | `blocklist …` |
+| Alerts and secret age | ✅ | 15-min self-check, Telegram + email, 180-day rotation reminder | `monitor.test.ts` |
+| Public status page leaks nothing internal | ✅ | Only user-facing incidents, friendly titles, no provider/quota names | `status.test.ts` |
+| CI can't be hijacked through commit text | ✅ | Untrusted values go through `env:`, never inline `${{ }}` in `run:` | review of `.github/workflows` |
+| Backups | ✅ | Weekly, AES-256 + PBKDF2, 90 days; restore drill passed 2026-11-17 | `docs/RESTORE.md` |
+
+## Known gaps / accepted
+
+- **TOTP_KEY** rotation needs re-enrolment (no dual-key re-encryption script) — accepted: rotate only after a leak. See ROTATION.md.
+- **OTP_PEPPER** rotation has no dual-pepper window — accepted: codes live 5 minutes; users just ask for a new one.
+- **Latency targets** (send < 150 ms, verify < 80 ms from Ghana) are not met: ~155 ms p50 for both, bounded by one round trip to D1 in Western Europe (no free African region). See RESEARCH.md.
+- **SMS** (textbee) is built and tested but not switched on.

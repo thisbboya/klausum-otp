@@ -30,6 +30,7 @@ Everything below is free and mostly automatic. Alerts come to Telegram (@klausum
 |---|---|
 | Live service | https://otp.klausum.study (health: `/health`) |
 | Control room | https://otp.klausum.study/admin |
+| Status page (public) | https://status.klausum.study |
 | Staging | https://otp-staging.klausum.study |
 | Code | https://github.com/thisbboya/klausum-otp |
 | Local secrets | `.secrets.local` (git-ignored — back it up privately) |

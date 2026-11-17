@@ -29,23 +29,26 @@ Wrangler prints a bookmark for the state *before* the restore, so you can undo i
    gunzip db.sql.gz
    ```
    (Windows: run these in **Git Bash**, which includes openssl.)
-3. **Practise on staging first:**
-   ```bash
-   npx wrangler d1 execute klausum-otp-staging --remote --env staging --command "DROP TABLE IF EXISTS d1_migrations"
-   npx wrangler d1 execute klausum-otp-staging --remote --env staging --file db.sql
-   ```
-   Then check https://otp-staging.klausum.study/health and log in to the staging admin.
-4. For production, restore into a **new** database and switch to it (safer than overwriting):
+3. **Load it into a fresh database** (the export contains `CREATE TABLE`, so it must go into an
+   empty one — never into a database that already has the tables):
    ```bash
    npx wrangler d1 create klausum-otp-restored
-   npx wrangler d1 execute klausum-otp-restored --remote --file db.sql
-   # put the new database_id into wrangler.jsonc (top-level d1_databases), commit, push → CI deploys
+   npx wrangler d1 execute klausum-otp-restored --remote --file db.sql -y
    ```
-5. Delete the decrypted `db.sql` afterwards.
+4. **Check it** against what you expect (compare with production if it's still readable):
+   ```bash
+   npx wrangler d1 execute klausum-otp-restored --remote --command "SELECT (SELECT COUNT(*) FROM apps) apps,(SELECT COUNT(*) FROM api_keys) keys,(SELECT COUNT(*) FROM totp_secrets) totp,(SELECT COUNT(*) FROM d1_migrations) migrations"
+   ```
+5. **Switch production to it:** in `wrangler.jsonc` (top-level `d1_databases`) set `database_name` to
+   `klausum-otp-restored` and `database_id` to the new id; in `.github/workflows/deploy.yml` change the
+   migrations line to `klausum-otp-restored`. Commit and push → CI applies any migrations newer than the
+   backup, then deploys. Check https://otp.klausum.study/health and log in to the control room.
+6. Delete the decrypted `db.sql` afterwards. Keep the old database for a week, then delete it.
 
 ## Practice
-Do a practice restore into **staging** every 6 months (see MAINTENANCE.md). Note the date here:
+Do a practice restore every 6 months (see MAINTENANCE.md): steps 1–4 into a throwaway database,
+compare, then `npx wrangler d1 delete <name> -y`.
 
 | Date | What | Result |
 |---|---|---|
-| | | |
+| 2026-11-17 | Downloaded the first weekly backup from GitHub (59 824 bytes), decrypted with `BACKUP_PASSPHRASE`, loaded into a throwaway D1, compared with production, deleted it | ✅ 10 tables, 1 196 rows; apps 4, keys 3, logs 18, stats 9, TOTP 2 — identical to production (production had 2 newer migrations, applied after the backup) |
