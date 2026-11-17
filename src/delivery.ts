@@ -1,11 +1,14 @@
 import type { Env } from "./index";
 import { mask } from "./otp";
 import { newId } from "./crypto";
-import { EMAIL_PROVIDERS, otpEmail, type EmailProvider } from "./email";
+import { EMAIL_PROVIDERS, otpEmail, type SendResult } from "./email";
+import { sendTextbee, smsText } from "./sms";
 
 export type Message = {
   requestId: string; appName: string; channel: "email" | "sms"; to: string;
   code: string; ttl: number; smsAppHash: string | null;
+  /** SMS only: if every SMS provider fails, send the code here instead. */
+  fallbackEmail?: string | null;
 };
 
 /** In-memory outbox used by tests (same isolate). Only filled in "console" mode. */
@@ -14,35 +17,42 @@ export const testOutbox: Message[] = [];
 const today = () => new Date().toISOString().slice(0, 10); // UTC date
 
 type Attempt = { provider: string; ok: boolean; error: string | null; ms: number };
+type Provider = { name: string; send: () => Promise<SendResult> };
 
 /**
  * Try providers in order; first success wins. A provider that reports a quota error
  * is remembered in `settings` as exhausted until midnight UTC and skipped.
  */
-async function deliverEmail(env: Env, m: Message, attempts: Attempt[]): Promise<string | null> {
-  const order: EmailProvider[] = ["resend", "ahasend"];
-  const keys = order.map((p) => `exhausted:${p}`);
+async function tryProviders(env: Env, providers: Provider[], attempts: Attempt[]): Promise<string | null> {
+  const keys = providers.map((p) => `exhausted:${p.name}`);
   const { results } = await env.DB.prepare(
     `SELECT key, value FROM settings WHERE key IN (${keys.map(() => "?").join(",")})`,
   ).bind(...keys).all<{ key: string; value: string }>();
   const exhausted = new Set(results.filter((r) => r.value === today()).map((r) => r.key.slice(10)));
 
-  const mail = { to: m.to, ...otpEmail(m.appName, m.code, m.ttl) };
-  for (const p of order) {
-    if (exhausted.has(p)) continue;
+  for (const p of providers) {
+    if (exhausted.has(p.name)) {
+      attempts.push({ provider: p.name, ok: false, error: "skipped: quota used up today", ms: 0 });
+      continue;
+    }
     const t0 = Date.now();
-    let res;
-    try { res = await EMAIL_PROVIDERS[p](env, mail); }
-    catch (e) { res = { ok: false as const, quota: false, error: `${p} network: ${String(e).slice(0, 200)}` }; }
-    attempts.push({ provider: p, ok: res.ok, error: res.ok ? null : res.error, ms: Date.now() - t0 });
-    if (res.ok) return p;
+    let res: SendResult;
+    try { res = await p.send(); }
+    catch (e) { res = { ok: false, quota: false, error: `${p.name} network: ${String(e).slice(0, 200)}` }; }
+    attempts.push({ provider: p.name, ok: res.ok, error: res.ok ? null : res.error, ms: Date.now() - t0 });
+    if (res.ok) return p.name;
     if (res.quota) {
       await env.DB.prepare(
         "INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-      ).bind(`exhausted:${p}`, today(), Math.floor(Date.now() / 1000)).run();
+      ).bind(`exhausted:${p.name}`, today(), Math.floor(Date.now() / 1000)).run();
     }
   }
   return null;
+}
+
+function emailProviders(env: Env, to: string, m: Message): Provider[] {
+  const mail = { to, ...otpEmail(m.appName, m.code, m.ttl) };
+  return (["resend", "ahasend"] as const).map((name) => ({ name, send: () => EMAIL_PROVIDERS[name](env, mail) }));
 }
 
 export async function deliver(env: Env, m: Message): Promise<void> {
@@ -57,9 +67,14 @@ export async function deliver(env: Env, m: Message): Promise<void> {
     attempts.push({ provider: "console", ok: true, error: null, ms: 0 });
     provider = "console";
   } else if (m.channel === "email") {
-    provider = await deliverEmail(env, m, attempts);
+    provider = await tryProviders(env, emailProviders(env, m.to, m), attempts);
   } else {
-    attempts.push({ provider: "sms", ok: false, error: "sms not available yet (Phase 5)", ms: 0 });
+    const text = smsText(m.appName, m.code, m.ttl, m.smsAppHash);
+    provider = await tryProviders(env, [{ name: "textbee", send: () => sendTextbee(env, m.to, text) }], attempts);
+    if (!provider && m.fallbackEmail) {
+      const p = await tryProviders(env, emailProviders(env, m.fallbackEmail, m), attempts);
+      if (p) provider = `${p} (sms fallback)`;
+    }
   }
 
   const now = Math.floor(Date.now() / 1000);

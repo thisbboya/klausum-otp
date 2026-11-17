@@ -11,6 +11,8 @@ export type Env = {
   RESEND_API_KEY?: string;
   AHASEND_API_KEY?: string;
   AHASEND_ACCOUNT_ID?: string;
+  TEXTBEE_API_KEY?: string;
+  TEXTBEE_DEVICE_ID?: string;
 };
 
 export const app = new Hono<{ Bindings: Env }>();

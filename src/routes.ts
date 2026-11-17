@@ -30,10 +30,12 @@ const sendSchema = z.object({
   to: z.string().min(3).max(254),
   purpose: z.string().regex(/^[a-z_]{1,32}$/).default("login"),
   locale: z.string().regex(/^[a-z]{2}(-[A-Z]{2})?$/).default("en"),
+  /** SMS only: where to send the code if SMS delivery fails (e.g. textbee phone offline). */
+  fallback_email: z.string().max(254).optional(),
 }).strict();
 
 /** Shared by /send and /resend. Rate limit → invalidate old → insert → respond; deliver in background. */
-async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, purpose: string) {
+async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, purpose: string, fallbackEmail: string | null = null) {
   const pepper = c.env.OTP_PEPPER;
   const now = nowS();
   const rh = await recipientHash(pepper, app.id, to);
@@ -60,13 +62,13 @@ async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, pu
     c.env.DB.prepare(
       `INSERT INTO otp_requests (id,app_id,recipient_hash,recipient_enc,channel,code_hash,expires_at,purpose,created_at)
        VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).bind(id, app.id, rh, await encryptRecipient(pepper, to), channel, await codeHash(pepper, app.id, rh, code), now + ttl, purpose, now),
+    ).bind(id, app.id, rh, await encryptRecipient(pepper, fallbackEmail ? `${to}\n${fallbackEmail}` : to), channel, await codeHash(pepper, app.id, rh, code), now + ttl, purpose, now),
   ]);
   c.header("Server-Timing", `db;dur=${Date.now() - t0}`, { append: true });
 
   // Respond now; deliver after the response is sent.
   c.executionCtx.waitUntil(
-    deliver(c.env, { requestId: id, appName: app.display_name ?? app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash })
+    deliver(c.env, { requestId: id, appName: app.display_name ?? app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash, fallbackEmail })
       .catch((e) => console.error("deliver failed", id, String(e))),
   );
   return c.json({ request_id: id, channel, expires_in: ttl, resend_after: RESEND_AFTER }, 202);
@@ -78,7 +80,13 @@ v1.post("/otp/send", async (c) => {
   const { channel, purpose } = p.data;
   const to = channel === "email" ? normaliseEmail(p.data.to) : normalisePhone(p.data.to);
   if (!to) return bad(c);
-  return issue(c, c.get("app"), channel, to, purpose);
+  let fallback: string | null = null;
+  if (p.data.fallback_email !== undefined) {
+    if (channel !== "sms") return bad(c);
+    fallback = normaliseEmail(p.data.fallback_email);
+    if (!fallback) return bad(c);
+  }
+  return issue(c, c.get("app"), channel, to, purpose, fallback);
 });
 
 // ---------------------------------------------------------------------------
@@ -129,8 +137,8 @@ v1.post("/otp/resend", async (c) => {
   if (!p.success) return bad(c);
   const row = await load(c, p.data.request_id);
   if (!row || row.used_at !== null || !row.recipient_enc) return c.json({ error: "not_found" }, 404);
-  const to = await decryptRecipient(c.env.OTP_PEPPER, row.recipient_enc);
-  return issue(c, c.get("app"), row.channel, to, row.purpose);
+  const [to, fallback] = (await decryptRecipient(c.env.OTP_PEPPER, row.recipient_enc)).split("\n");
+  return issue(c, c.get("app"), row.channel, to, row.purpose, fallback || null);
 });
 
 v1.get("/otp/status/:id", async (c) => {
