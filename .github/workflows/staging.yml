@@ -14,6 +14,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
+      - run: npm --prefix web ci && npm run build:web
       - run: npm run typecheck
       - run: npm test
   deploy-staging:
@@ -29,6 +30,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
+      - run: npm --prefix web ci && npm run build:web
       - run: npx wrangler d1 migrations apply klausum-otp-staging --remote --env staging
       - env:
           MSG: staging ${{ github.sha }}

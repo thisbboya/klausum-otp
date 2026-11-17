@@ -4,6 +4,15 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
+  // Website (/) and control room (/admin) are static files built from web/ (npm run build:web).
+  // API paths run the Worker first; everything else is served from web/dist.
+  "assets": {
+    "directory": "web/dist",
+    "binding": "ASSETS",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "none",
+    "run_worker_first": ["/", "/v1/*", "/admin/*", "/auth/*", "/health", "/status", "/status.*", "/dashboard"]
+  },
   // Placement hint tested (azure:westeurope, next to D1): server time fell to ~30 ms but
   // Ghana round trips got SLOWER (+30 ms on send) because of the extra edge→Azure hop.
   // With every endpoint at one D1 round trip, running at the Accra edge is faster.
