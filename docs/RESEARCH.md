@@ -31,8 +31,13 @@ Legend: ✅ verified from official page today · ⏳ not yet verified (will veri
 - ✅ **AhaSend**: free 1,000/month, no card, EU-hosted. API v2 `POST https://api.ahasend.com/v2/accounts/{account_id}/messages`, Bearer key, body `{from:{email,name}, recipients:[{email}], subject, text_content, html_content}` — https://ahasend.com/docs/send-api/send-email.md . Signup rejects free (Gmail) addresses → registered with support@klausum.study (forwards to Gmail).
 - ✅ Deliverability: mail-tester.com score **9.3/10** on first Resend send (SPF+DKIM aligned, DMARC p=none).
 
+## SMS (checked 2026-11-17, Phase 5 — code built, go-live postponed)
+- ✅ **textbee** free: 1 device, **50 SMS/day, 300/month** (sent+received count). `POST https://api.textbee.dev/api/v1/gateway/send-sms`, header `x-api-key`, body `{recipients:[...], message, deviceId?}`. 200 = queued (not delivered); 429 = plan limit. Keys are full-access (no send-only scope). Phone heartbeat every 30 min by default — https://textbee.dev/llms-full.txt
+- ✅ **SMS Retriever**: message ≤ **140 bytes**, must contain the code and the app's 11-char hash; current docs no longer require `<#>` (we keep it for old devices) — https://developers.google.com/identity/sms-retriever/verify
+
+## TOTP (checked 2026-11-17, Phase 6)
+- ✅ RFC 6238: 30 s step, allow at most 1 step of drift; SHA-1 test vectors (seed `12345678901234567890`) pass in `test/totp.test.ts`, as do RFC 4226 HOTP vectors.
+- ✅ QR: **uqr** 0.1.3 (MIT, zero deps, ESM, `renderSVG`) — works in Workers. Note: bundle grew to ~887 KB (152 KB gzip), well under the 3 MB free limit.
+
 ## Still to verify (in the phase that needs them)
-- ⏳ textbee send-SMS endpoint + auth header (Phase 5)
-- ⏳ Android SMS Retriever message format (Phase 5)
-- ⏳ RFC 6238 / 4226 details (Phase 6)
 - ⏳ OWASP MFA cheat sheet (Phase 3 / Phase 7)
