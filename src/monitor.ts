@@ -13,6 +13,7 @@
 import type { Env } from "./index";
 import { buildStats, utcDay } from "./stats";
 import { sendAhaSend, sendResend } from "./email";
+import { recordStatus } from "./status";
 
 export type Alert = { key: string; title: string; detail: string };
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -137,6 +138,7 @@ export async function selfCheck(env: Env) {
     for (const k of cleared) writes.push(env.DB.prepare("DELETE FROM settings WHERE key=?").bind(`alert:${k}`));
   }
   if (writes.length) await env.DB.batch(writes);
+  await recordStatus(env, alerts.map((x) => x.key)); // public status page + incident history
   return { alerts: alerts.map((x) => x.key), sent: fresh.map((x) => x.key), cleared };
 }
 

@@ -5,6 +5,7 @@ import { totp } from "./totp-routes";
 import { DASHBOARD_CSS, DASHBOARD_HTML, DASHBOARD_JS } from "./dashboard";
 import { CONTROL_HTML, CONTROL_JS } from "./control";
 import { adminLogin } from "./admin-login";
+import { STATUS_CSS, STATUS_HTML, STATUS_JS, statusData } from "./status";
 import { dailySummary, selfCheck } from "./monitor";
 
 // Must match wrangler.jsonc "triggers.crons" (3 of the 5 free Cron Triggers).
@@ -45,6 +46,15 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+
+// Public status page: https://status.klausum.study (or /status on any of our hostnames).
+const STATUS_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'";
+const statusPage = (c: any) => { c.header("Content-Security-Policy", STATUS_CSP); c.header("Cache-Control", "public, max-age=60"); return c.html(STATUS_HTML); };
+app.get("/", (c) => (new URL(c.req.url).hostname.startsWith("status.") ? statusPage(c) : c.json({ service: "Klausum OTP", docs: "https://github.com/thisbboya/klausum-otp", status: "https://status.klausum.study" })));
+app.get("/status", statusPage);
+app.get("/status.json", async (c) => { c.header("Access-Control-Allow-Origin", "*"); return c.json(await statusData(c.env)); });
+app.get("/status.css", (c) => c.body(STATUS_CSS, 200, { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "public, max-age=300" }));
+app.get("/status.js", (c) => c.body(STATUS_JS, 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=300" }));
 
 // Admin dashboard page (data comes from /admin/stats, which needs the admin token).
 const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
