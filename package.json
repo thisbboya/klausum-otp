@@ -10,7 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "bench": "node scripts/bench.mjs",
-    "update:disposable": "node scripts/update-disposable.mjs"
+    "update:disposable": "node scripts/update-disposable.mjs",
+    "admin": "node scripts/admin.mjs"
   },
   "dependencies": {
     "hono": "^4.13.19",

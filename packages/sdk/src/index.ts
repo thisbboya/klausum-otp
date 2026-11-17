@@ -53,7 +53,7 @@ export type VerifyOtpResult =
 export type DeliveryStatus = "queued" | "sent" | "delivered" | "failed";
 export interface StatusResult { requestId: string; channel: Channel; status: DeliveryStatus; provider: string | null }
 
-export type OtpErrorCode = "invalid_request" | "email_not_allowed" | "unauthorized" | "rate_limited" | "not_found" | "origin_not_allowed" | "network" | "server_error";
+export type OtpErrorCode = "invalid_request" | "email_not_allowed" | "blocked" | "unauthorized" | "rate_limited" | "not_found" | "origin_not_allowed" | "network" | "server_error";
 
 /** Thrown for anything that isn't a normal answer. `retryAfter` is set on `rate_limited`. */
 export class OtpError extends Error {
@@ -72,7 +72,7 @@ export interface OtpClient {
   getStatus(requestId: string): Promise<StatusResult>;
 }
 
-const KNOWN: OtpErrorCode[] = ["invalid_request", "email_not_allowed", "unauthorized", "rate_limited", "not_found", "origin_not_allowed"];
+const KNOWN: OtpErrorCode[] = ["invalid_request", "email_not_allowed", "blocked", "unauthorized", "rate_limited", "not_found", "origin_not_allowed"];
 
 export function createOtpClient(opts: OtpClientOptions): OtpClient {
   if (!/^kotp_(live|test)_[A-Za-z0-9]{32}$/.test(opts.apiKey ?? "")) throw new Error("Klausum OTP: apiKey must be a kotp_live_… or kotp_test_… key");

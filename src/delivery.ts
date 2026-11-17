@@ -4,9 +4,10 @@ import { newId } from "./crypto";
 import { EMAIL_PROVIDERS, otpEmail, type SendResult } from "./email";
 import { sendTextbee, smsText } from "./sms";
 import { statStmt } from "./stats";
+import { DEFAULT_PROVIDERS, type ProviderSettings } from "./admin";
 
 export type Message = {
-  requestId: string; appName: string; channel: "email" | "sms"; to: string;
+  requestId: string; appId?: string; appName: string; channel: "email" | "sms"; to: string;
   code: string; ttl: number; smsAppHash: string | null;
   /** SMS only: if every SMS provider fails, send the code here instead. */
   fallbackEmail?: string | null;
@@ -25,13 +26,22 @@ type Provider = { name: string; send: () => Promise<SendResult> };
  * is remembered in `settings` as exhausted until midnight UTC and skipped.
  */
 async function tryProviders(env: Env, providers: Provider[], attempts: Attempt[]): Promise<string | null> {
-  const keys = providers.map((p) => `exhausted:${p.name}`);
+  // One read: which providers are used up today + the admin's on/off switches and order.
+  const keys = [...providers.map((p) => `exhausted:${p.name}`), "providers"];
   const { results } = await env.DB.prepare(
     `SELECT key, value FROM settings WHERE key IN (${keys.map(() => "?").join(",")})`,
   ).bind(...keys).all<{ key: string; value: string }>();
-  const exhausted = new Set(results.filter((r) => r.value === today()).map((r) => r.key.slice(10)));
+  const exhausted = new Set(results.filter((r) => r.key.startsWith("exhausted:") && r.value === today()).map((r) => r.key.slice(10)));
+  const cfgRow = results.find((r) => r.key === "providers");
+  const cfg: ProviderSettings = cfgRow ? JSON.parse(cfgRow.value) : DEFAULT_PROVIDERS;
+  const rank = (n: string) => { const i = (cfg.email_order as string[]).indexOf(n); return i < 0 ? 99 : i; };
+  const ordered = [...providers].sort((a, b) => rank(a.name) - rank(b.name));
 
-  for (const p of providers) {
+  for (const p of ordered) {
+    if (cfg.disabled.includes(p.name)) {
+      attempts.push({ provider: p.name, ok: false, error: "skipped: turned off in the dashboard", ms: 0 });
+      continue;
+    }
     if (exhausted.has(p.name)) {
       attempts.push({ provider: p.name, ok: false, error: "skipped: quota used up today", ms: 0 });
       continue;
@@ -83,8 +93,8 @@ export async function deliver(env: Env, m: Message): Promise<void> {
     env.DB.prepare("UPDATE otp_requests SET status=?, provider=? WHERE id=? AND status='queued'")
       .bind(provider ? "sent" : "failed", provider ?? attempts.at(-1)?.provider ?? null, m.requestId),
     ...attempts.map((a) =>
-      env.DB.prepare("INSERT INTO delivery_logs (id,otp_request_id,provider,status,error,latency_ms,created_at) VALUES (?,?,?,?,?,?,?)")
-        .bind(newId("dlv"), m.requestId, a.provider, a.ok ? "sent" : "failed", a.error, a.ms, now)),
+      env.DB.prepare("INSERT INTO delivery_logs (id,otp_request_id,app_id,channel,provider,status,error,latency_ms,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+        .bind(newId("dlv"), m.requestId, m.appId ?? null, m.channel, a.provider, a.ok ? "sent" : "failed", a.error, a.ms, now)),
     // Lasting daily counters for the dashboard / quota meters (rows above are cleaned up).
     statStmt(env.DB, `send:${m.channel}`),
     statStmt(env.DB, `${provider ? "sent" : "failed"}:${m.channel}`),
