@@ -4,7 +4,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
-  // Custom domain — Cloudflare creates the DNS record + certificate for you.
-  // Requires klausum.study to be on Cloudflare DNS.
-  "routes": [{ "pattern": "otp.klausum.study", "custom_domain": true }]
+  "routes": [{ "pattern": "otp.klausum.study", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "klausum-otp",
+      "database_id": "5d79963c-8ded-4f50-b9b2-913e353aaa6c",
+      "migrations_dir": "migrations"
+    }
+  ]
 }

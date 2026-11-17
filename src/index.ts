@@ -1,6 +1,10 @@
 import { Hono } from "hono";
+import { admin } from "./admin";
 
-export type Env = Record<string, never>;
+export type Env = {
+  DB: D1Database;
+  ADMIN_TOKEN: string;
+};
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -18,6 +22,7 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+app.route("/admin", admin);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
