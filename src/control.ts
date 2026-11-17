@@ -65,6 +65,7 @@ label.f input,select{margin:0;padding:9px 11px;font-size:14px;border:2px solid v
     </nav>
 
     <div data-panel="overview">
+      <div id="secret-warn"></div>
       <div class="grid kpis" id="kpis"></div>
       <div class="grid two"><div class="card"><h2>Free quota left</h2><div id="quotas"></div></div>
       <div class="card"><h2>Last 7 days</h2><div id="chart" class="chart"></div><div class="legend"><span><i class="sw email"></i>Email</span><span><i class="sw sms"></i>SMS</span></div></div></div>
@@ -174,6 +175,8 @@ export const CONTROL_JS = `
   // ---- overview ----
   async function loadOverview() {
     const d = await api("GET", "/admin/stats"), T = d.today;
+    const due = (d.secrets || []).filter((x) => x.due);
+    $("secret-warn").innerHTML = due.length ? '<div class="card" style="margin-bottom:14px;border-color:var(--warn)"><b>🔑 Time to rotate ' + due.length + ' secret(s)</b><p class="muted small" style="margin:6px 0 0">' + due.map((x) => esc(x.name) + " (" + x.ageDays + " days)").join(" · ") + ' — see docs/ROTATION.md, then <code>npm run admin -- secret:rotated NAME</code>.</p></div>' : "";
     const ok = T.email.delivered + T.sms.delivered, bad = T.email.failed + T.sms.failed;
     const k = [["Emails today", T.email.sends, T.email.failed + " failed"], ["SMS today", T.sms.sends, T.sms.failed + " failed"],
       ["Delivery success", ok + bad ? pct(ok / (ok + bad)) : "–", "today"], ["Avg delivery", T.avgDeliveryMs == null ? "–" : T.avgDeliveryMs + " ms", "provider round trip"],

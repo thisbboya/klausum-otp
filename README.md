@@ -177,4 +177,8 @@ npm run update:disposable   # refresh the throwaway-email list (monthly)
 Secrets for local dev go in `.dev.vars` (git-ignored). Never commit keys.
 
 ## Docs
-[SECURITY.md](docs/SECURITY.md) · [RESEARCH.md](docs/RESEARCH.md) · [LICENSE](LICENSE) (MIT)
+Operations: [RUNBOOK](docs/RUNBOOK.md) · [MAINTENANCE](docs/MAINTENANCE.md) · [ROTATION](docs/ROTATION.md) · [RESTORE](docs/RESTORE.md) · [SMS phone](docs/SMS-PHONE.md)
+Reference: [SECURITY](docs/SECURITY.md) · [RESEARCH](docs/RESEARCH.md)
+Policies: [TERMS](TERMS.md) · [PRIVACY](PRIVACY.md) · [ABUSE](ABUSE.md) · [LICENSE](LICENSE) (MIT)
+
+Control room: `https://<your domain>/admin` (email code + authenticator). CLI: `npm run admin -- help`.

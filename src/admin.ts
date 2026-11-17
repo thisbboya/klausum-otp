@@ -264,3 +264,14 @@ admin.post("/owner-totp/enroll", async (c) => {
 admin.post("/monitor/check", async (c) => c.json(await selfCheck(c.env)));
 admin.post("/monitor/test-alert", async (c) => c.json(await notify(c.env, "Klausum OTP: test alert", "If you can read this, alerts reach you. ✅")));
 admin.post("/monitor/daily-summary", async (c) => c.json(await dailySummary(c.env)));
+
+// ---- secret ages -----------------------------------------------------------------
+/** Record that a secret was just rotated (resets its 180-day clock). */
+admin.post("/secrets/rotated", async (c) => {
+  const p = z.object({ name: z.string().regex(/^[A-Z0-9_]{3,40}( \(GitHub\))?$/) }).strict().safeParse(await body(c));
+  if (!p.success) return c.json(bad(p.error.issues), 400);
+  const now = nowS();
+  await c.env.DB.prepare("INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
+    .bind(`secret:${p.data.name}`, String(now), now).run();
+  return c.json({ name: p.data.name, setAt: now });
+});

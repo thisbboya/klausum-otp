@@ -26,6 +26,8 @@ const HELP = `Klausum OTP admin
   block:add <phone|email|domain|ip> <value> [note]
   block:remove <kind> <stored value from block:list>
   admin:totp-setup [--reset]        set up (or replace) your control-room authenticator (QR)
+  secret:ages                       how old each secret is (rotate every 180 days)
+  secret:rotated <NAME>             record that you just rotated NAME (e.g. RESEND_API_KEY)
 
 <app> = app name (e.g. klausum-web) or id.  Env: ADMIN_TOKEN, OTP_URL.`;
 
@@ -133,6 +135,16 @@ switch (cmd) {
     await api("DELETE", `/blocklist/${encodeURIComponent(args[0])}/${encodeURIComponent(args[1])}`);
     console.log("✔ removed");
     break;
+  case "secret:ages": {
+    const s = await api("GET", "/stats");
+    console.table(s.secrets.map((x) => ({ secret: x.name, "days old": x.ageDays, "set on": when(x.setAt), status: x.due ? "ROTATE NOW" : "ok" })));
+    break;
+  }
+  case "secret:rotated": {
+    const r = await api("POST", "/secrets/rotated", { name: args.join(" ") });
+    console.log(`✔ ${r.name} marked as rotated today`);
+    break;
+  }
   case "admin:totp-setup": {
     // Creates (or with --reset, replaces) the owner's authenticator for the control room and
     // opens a QR page to scan with Google Authenticator. The page file is deleted after 2 minutes.

@@ -80,6 +80,10 @@ export async function findAlerts(env: Env, now = Date.now()): Promise<Alert[]> {
   if (sends >= 30 && sends >= 5 * Math.max(normalPerHour, 1))
     alerts.push({ key: "spike", title: `Unusual spike: ${sends} codes in the last hour`, detail: `About ${Math.max(1, Math.round(normalPerHour))}/hour is normal. Possible abuse — check Logs, consider the Blocklist or pausing an app.` });
 
+  // Secrets older than 180 days (one combined reminder).
+  const due = s.secrets.filter((x) => x.due);
+  if (due.length) alerts.push({ key: "secrets", title: `${due.length} secret(s) due for rotation`, detail: due.map((x) => `${x.name}: ${x.ageDays} days old`).join("\n") + "\nHow: docs/ROTATION.md, then `npm run admin -- secret:rotated <NAME>`." });
+
   return alerts;
 }
 

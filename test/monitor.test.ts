@@ -80,3 +80,18 @@ describe("daily summary", () => {
     expect(tg).toContain("Resend:");
   });
 });
+
+describe("secret-age reminder", () => {
+  it("flags secrets older than 180 days, and secret:rotated resets the clock", async () => {
+    const old = Math.floor(Date.now() / 1000) - 181 * 86400;
+    await env.DB.prepare("INSERT INTO settings (key,value,updated_at) VALUES ('secret:OTP_PEPPER',?,0), ('secret:ADMIN_TOKEN',?,0)")
+      .bind(String(old), String(Math.floor(Date.now() / 1000))).run();
+    const a = (await findAlerts(env as any)).find((x) => x.key === "secrets")!;
+    expect(a.title).toBe("1 secret(s) due for rotation");
+    expect(a.detail).toContain("OTP_PEPPER: 181 days old");
+    const { SELF } = await import("cloudflare:test");
+    const r = await SELF.fetch("https://otp.test/admin/secrets/rotated", { method: "POST", headers: { Authorization: "Bearer test-admin-token", "Content-Type": "application/json", "CF-Connecting-IP": "10.9.8.7" }, body: JSON.stringify({ name: "OTP_PEPPER" }) });
+    expect(r.status).toBe(200);
+    expect((await findAlerts(env as any)).map((x) => x.key)).not.toContain("secrets");
+  });
+});

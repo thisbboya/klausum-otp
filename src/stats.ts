@@ -7,6 +7,9 @@ export const statStmt = (db: D1Database, key: string, ms = 0, day = utcDay()) =>
      ON CONFLICT(day, key) DO UPDATE SET count = count + 1, sum_ms = sum_ms + excluded.sum_ms`,
   ).bind(day, key, Math.max(0, Math.round(ms)));
 
+/** Rotate secrets at least this often (docs/ROTATION.md). */
+export const SECRET_MAX_AGE_DAYS = 180;
+
 /** Free-tier limits we track (checked 2026-11-17, see docs/RESEARCH.md). */
 export const QUOTAS = [
   { provider: "resend", label: "Resend", day: 100, month: 3000 },
@@ -22,7 +25,7 @@ export async function buildStats(db: D1Database, now = Date.now()) {
   const monthStart = today.slice(0, 8) + "01";
   const from = weekAgo < monthStart ? weekAgo : monthStart;
 
-  const [rowsRes, appsRes, settingsRes, logsRes] = await db.batch([
+  const [rowsRes, appsRes, settingsRes, logsRes, secretsRes] = await db.batch([
     db.prepare("SELECT day, key, count, sum_ms FROM stats_daily WHERE day >= ? ORDER BY day").bind(from),
     db.prepare("SELECT id, name, display_name, status, daily_cap FROM apps WHERE id != 'app_system_admin' ORDER BY created_at"),
     db.prepare("SELECT key, value FROM settings WHERE key LIKE 'exhausted:%'"),
@@ -31,6 +34,7 @@ export async function buildStats(db: D1Database, now = Date.now()) {
        FROM delivery_logs l LEFT JOIN otp_requests r ON r.id = l.otp_request_id
        ORDER BY l.created_at DESC LIMIT 25`,
     ),
+    db.prepare("SELECT key, value FROM settings WHERE key LIKE 'secret:%' ORDER BY key"),
   ]);
   const rows = rowsRes.results as Row[];
   const sum = (pred: (r: Row) => boolean) => rows.filter(pred).reduce((a, r) => ({ n: a.n + r.count, ms: a.ms + r.sum_ms }), { n: 0, ms: 0 });
@@ -71,7 +75,14 @@ export async function buildStats(db: D1Database, now = Date.now()) {
     sms: sum((r) => r.day === d && r.key === "send:sms").n,
   }));
 
+  const nowS = Math.floor(now / 1000);
+  const secrets = (secretsRes.results as { key: string; value: string }[]).map((r) => {
+    const ageDays = Math.floor((nowS - Number(r.value)) / 86400);
+    return { name: r.key.slice(7), setAt: Number(r.value), ageDays, due: ageDays >= SECRET_MAX_AGE_DAYS };
+  });
+
   return {
+    secrets,
     generatedAt: new Date(now).toISOString(),
     today: { email: channel("email", on(today)), sms: channel("sms", on(today)), verify: verify(on(today)), avgDeliveryMs: latency(on(today)) },
     week: { email: channel("email", since(weekAgo)), sms: channel("sms", since(weekAgo)), verify: verify(since(weekAgo)), avgDeliveryMs: latency(since(weekAgo)) },
