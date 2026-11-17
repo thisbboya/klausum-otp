@@ -7,6 +7,7 @@ import { counterStatements, evaluate, withinLimitsSql } from "./ratelimit";
 import { deliver } from "./delivery";
 import { checkEmail } from "./email-check";
 import { statStmt } from "./stats";
+import { blockHash } from "./admin";
 import {
   MAX_ATTEMPTS, codeHash, decryptRecipient, encryptRecipient, generateCode, hmacHex,
   normaliseEmail, normalisePhone, recipientHash,
@@ -26,6 +27,10 @@ const RESEND_AFTER = 30;
  * (A misbehaving app could vary it, but it's still bound by recipient + app daily caps.)
  */
 const IP_RE = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]{2,39})$/i;
+function rawIp(c: C): string {
+  const fwd = c.req.header("X-End-User-IP")?.trim();
+  return fwd && IP_RE.test(fwd) ? fwd : c.req.header("CF-Connecting-IP") ?? "unknown";
+}
 function endUserIp(c: C): string {
   const fwd = c.req.header("X-End-User-IP")?.trim();
   return fwd && IP_RE.test(fwd) ? `user:${fwd}` : c.req.header("CF-Connecting-IP") ?? "unknown";
@@ -72,10 +77,17 @@ async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, pu
     encryptRecipient(pepper, fallbackEmail ? `${to}\n${fallbackEmail}` : to),
     codeHash(pepper, app.id, id, code),
   ]);
-  const ok = withinLimitsSql(rules);
+  // Blocklist (admin-managed): this person, their email domain (and parent domains), their IP.
+  const domains = channel === "email" ? to.slice(to.indexOf("@") + 1).split(".").map((_, i, a) => a.slice(i).join(".")).filter((d) => d.includes(".")) : [];
+  const [bRcpt, bIp] = await Promise.all([blockHash(pepper, channel === "email" ? "email" : "phone", to), blockHash(pepper, "ip", rawIp(c))]);
+  const blockedSql = `EXISTS (SELECT 1 FROM blocklist WHERE (kind=? AND value=?) OR (kind='ip' AND value=?)${domains.length ? ` OR (kind='domain' AND value IN (${domains.map(() => "?").join(",")}))` : ""})`;
+  const blockedBinds = [channel === "email" ? "email" : "phone", bRcpt, bIp, ...domains];
+  const lim = withinLimitsSql(rules);
+  const ok = { sql: `${lim.sql} AND NOT ${blockedSql}`, binds: [...lim.binds, ...blockedBinds] };
   const t0 = Date.now();
   const res = await c.env.DB.batch([
     ...counterStatements(c.env.DB, rules, now),
+    c.env.DB.prepare(`SELECT ${blockedSql} AS blocked`).bind(...blockedBinds),
     // Rule 7: a new code kills every older live code for this recipient.
     c.env.DB.prepare(
       `UPDATE otp_requests SET status='invalidated'
@@ -87,12 +99,13 @@ async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, pu
     ).bind(id, app.id, rh, enc, channel, ch, now + ttl, purpose, now, ...ok.binds),
   ]);
   c.header("Server-Timing", `db;dur=${Date.now() - t0}`, { append: true });
+  if ((res[rules.length].results[0] as { blocked: number }).blocked) return c.json({ error: "blocked" }, 403);
   const rl = evaluate(rules, res, now);
   if (!rl.ok) return limited(c, rl.retryAfter);
 
   // Respond now; deliver after the response is sent.
   c.executionCtx.waitUntil(
-    (c.get("testMode") ? markTest(c.env, id) : deliver(c.env, { requestId: id, appName: app.display_name ?? app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash, fallbackEmail }))
+    (c.get("testMode") ? markTest(c.env, id) : deliver(c.env, { requestId: id, appId: app.id, appName: app.display_name ?? app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash, fallbackEmail }))
       .catch((e) => console.error("deliver failed", id, String(e))),
   );
   return c.json({ request_id: id, channel, expires_in: ttl, resend_after: RESEND_AFTER }, 202);

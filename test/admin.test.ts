@@ -22,9 +22,10 @@ describe("POST /admin/apps", () => {
     const body = await res.json<{ id: string; api_key: string }>();
     expect(body.api_key).toMatch(/^kotp_live_[A-Za-z0-9]{32}$/);
 
+    const key = await env.DB.prepare("SELECT * FROM api_keys WHERE app_id=?").bind(body.id).first<Record<string, string>>();
+    expect(key!.key_hash).toBe(await sha256Hex(body.api_key));
     const row = await env.DB.prepare("SELECT * FROM apps WHERE id=?").bind(body.id).first<Record<string, string>>();
-    expect(row!.api_key_hash).toBe(await sha256Hex(body.api_key));
-    expect(JSON.stringify(row)).not.toContain(body.api_key); // plain key never stored
+    expect(JSON.stringify(row) + JSON.stringify(key)).not.toContain(body.api_key); // plain key never stored
 
     const list = await SELF.fetch("https://otp.test/admin/apps", { headers: { Authorization: "Bearer test-admin-token" } });
     expect(JSON.stringify(await list.json())).not.toContain(body.api_key); // never shown again
