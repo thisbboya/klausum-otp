@@ -3,6 +3,7 @@ import { mask } from "./otp";
 import { newId } from "./crypto";
 import { EMAIL_PROVIDERS, otpEmail, type SendResult } from "./email";
 import { sendTextbee, smsText } from "./sms";
+import { statStmt } from "./stats";
 
 export type Message = {
   requestId: string; appName: string; channel: "email" | "sms"; to: string;
@@ -84,6 +85,11 @@ export async function deliver(env: Env, m: Message): Promise<void> {
     ...attempts.map((a) =>
       env.DB.prepare("INSERT INTO delivery_logs (id,otp_request_id,provider,status,error,latency_ms,created_at) VALUES (?,?,?,?,?,?,?)")
         .bind(newId("dlv"), m.requestId, a.provider, a.ok ? "sent" : "failed", a.error, a.ms, now)),
+    // Lasting daily counters for the dashboard / quota meters (rows above are cleaned up).
+    statStmt(env.DB, `send:${m.channel}`),
+    statStmt(env.DB, `${provider ? "sent" : "failed"}:${m.channel}`),
+    ...attempts.filter((a) => !a.error?.startsWith("skipped")).map((a) =>
+      statStmt(env.DB, `provider:${a.provider.split(" ")[0]}:${a.ok ? "sent" : "failed"}`, a.ms)),
   ]);
   if (!provider) console.error(`delivery failed for ${m.requestId} (${mask(m.to)}):`, attempts.map((a) => a.error).join(" | "));
 }

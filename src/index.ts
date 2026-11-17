@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { admin } from "./admin";
 import { v1, cleanup } from "./routes";
 import { totp } from "./totp-routes";
+import { DASHBOARD_CSS, DASHBOARD_HTML, DASHBOARD_JS } from "./dashboard";
 
 export type Env = {
   DB: D1Database;
@@ -28,12 +29,18 @@ app.use("*", async (c, next) => {
   c.header("X-Frame-Options", "DENY");
   c.header("Referrer-Policy", "no-referrer");
   c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
-  c.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+  if (!c.res.headers.has("Content-Security-Policy")) c.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
   c.header("Cache-Control", "no-store");
   c.header("Server-Timing", `total;dur=${Date.now() - t0}`, { append: true });
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+
+// Admin dashboard page (data comes from /admin/stats, which needs the admin token).
+const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+app.get("/dashboard", (c) => { c.header("Content-Security-Policy", PAGE_CSP); return c.html(DASHBOARD_HTML); });
+app.get("/dashboard.js", (c) => c.body(DASHBOARD_JS, 200, { "Content-Type": "text/javascript; charset=utf-8", "Content-Security-Policy": PAGE_CSP }));
+app.get("/dashboard.css", (c) => c.body(DASHBOARD_CSS, 200, { "Content-Type": "text/css; charset=utf-8", "Content-Security-Policy": PAGE_CSP }));
 app.route("/admin", admin);
 app.route("/v1/totp", totp);
 app.route("/v1", v1);

@@ -6,6 +6,7 @@ import { randomString } from "./crypto";
 import { counterStatements, evaluate, withinLimitsSql } from "./ratelimit";
 import { deliver } from "./delivery";
 import { checkEmail } from "./email-check";
+import { statStmt } from "./stats";
 import {
   MAX_ATTEMPTS, codeHash, decryptRecipient, encryptRecipient, generateCode, hmacHex,
   normaliseEmail, normalisePhone, recipientHash,
@@ -174,7 +175,10 @@ v1.post("/otp/verify", async (c) => {
   ]);
   c.header("Server-Timing", `db;dur=${Date.now() - t0}`, { append: true });
 
-  if (ok.results.length === 1) return c.json({ valid: true });
+  // Count the outcome for the dashboard (after responding; never slows the answer).
+  const countVerify = (good: boolean) => c.executionCtx.waitUntil(statStmt(c.env.DB, good ? "verify:ok" : "verify:fail").run().catch(() => {}));
+  if (ok.results.length === 1) { countVerify(true); return c.json({ valid: true }); }
+  countVerify(false);
   const row = state.results[0] as Pick<OtpRow, "used_at" | "status" | "attempts" | "expires_at"> | undefined;
   // Unknown / other app's / used / replaced → same answer, reveals nothing.
   if (!row || row.used_at !== null || row.status === "invalidated") return fail(c, "invalid_code");
