@@ -14,6 +14,7 @@ import type { Env } from "./index";
 import { buildStats, utcDay } from "./stats";
 import { sendAhaSend, sendResend } from "./email";
 import { recordStatus } from "./status";
+import { diagnose } from "./assistant";
 
 export type Alert = { key: string; title: string; detail: string };
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -127,7 +128,8 @@ export async function selfCheck(env: Env) {
 
   const fresh = alerts.filter((x) => !open.has(x.key) || t - (open.get(x.key) ?? 0) >= REPEAT_AFTER);
   if (fresh.length) {
-    const text = fresh.map((x) => `⚠️ ${x.title}\n${x.detail}`).join("\n\n") + "\n\nControl room: https://otp.klausum.study/admin";
+    const diagnosis = await diagnose(env, fresh.map((x) => x.key)); // null when no Gemini key
+    const text = fresh.map((x) => `⚠️ ${x.title}\n${x.detail}`).join("\n\n") + (diagnosis ? `\n\n🤖 Assistant: ${diagnosis}` : "") + "\n\nControl room: https://otp.klausum.study/admin#fixes";
     await notify(env, fresh.length === 1 ? `Klausum OTP: ${fresh[0].title}` : `Klausum OTP: ${fresh.length} problems`, text);
     for (const x of fresh) writes.push(env.DB.prepare("INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at").bind(`alert:${x.key}`, String(t), t));
   }
@@ -135,7 +137,7 @@ export async function selfCheck(env: Env) {
   const cleared = [...open.keys()].filter((k) => !now.has(k));
   if (cleared.length) {
     await notify(env, "Klausum OTP: resolved", cleared.map((k) => `✅ ${k} is back to normal`).join("\n"));
-    for (const k of cleared) writes.push(env.DB.prepare("DELETE FROM settings WHERE key=?").bind(`alert:${k}`));
+    for (const k of cleared) writes.push(env.DB.prepare("DELETE FROM settings WHERE key IN (?, ?)").bind(`alert:${k}`, `ai_diagnosis:${k}`));
   }
   if (writes.length) await env.DB.batch(writes);
   await recordStatus(env, alerts.map((x) => x.key)); // public status page + incident history

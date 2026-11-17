@@ -12,6 +12,7 @@ import { dailySummary, notify, selfCheck } from "./monitor";
 import { OWNER_REF, SYSTEM_APP } from "./admin-login";
 import { HANDBOOK, entryFor } from "./handbook";
 import { isToolName, runTool } from "./assistant-tools";
+import { chat, decide } from "./assistant";
 
 export const admin = new Hono<{ Bindings: Env }>();
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -301,4 +302,35 @@ admin.post("/actions/run", async (c) => {
   } catch (e) {
     return c.json({ error: "action_failed", message: String((e as Error).message ?? e).slice(0, 200) }, 400);
   }
+});
+
+// ---- assistant ---------------------------------------------------------------------
+admin.post("/assistant", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as { messages?: unknown } | null;
+  const msgs = Array.isArray(b?.messages) ? b!.messages : [];
+  const clean = msgs
+    .filter((m): m is { role: string; text: string } => !!m && typeof m === "object" && typeof (m as any).text === "string")
+    .map((m) => ({ role: m.role === "model" ? ("model" as const) : ("user" as const), text: m.text }))
+    .slice(-12);
+  if (!clean.length || clean.at(-1)!.role !== "user") return c.json({ error: "invalid_request", issues: ["messages: last one must be from the user"] }, 400);
+  try {
+    return c.json(await chat(c.env, clean));
+  } catch (e) {
+    console.error("assistant", e);
+    return c.json({ reply: "The assistant couldn't reach Gemini just now. Try again in a minute.", actions: [] });
+  }
+});
+admin.post("/assistant/approve", async (c) => {
+  const { id } = (await c.req.json().catch(() => ({}))) as { id?: string };
+  const r = await decide(c.env, String(id ?? ""), true);
+  return "error" in r ? c.json(r, 400) : c.json(r);
+});
+admin.post("/assistant/cancel", async (c) => {
+  const { id } = (await c.req.json().catch(() => ({}))) as { id?: string };
+  const r = await decide(c.env, String(id ?? ""), false);
+  return "error" in r ? c.json(r, 400) : c.json(r);
+});
+admin.get("/assistant/actions", async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT id,created_at,tool,args_json,status,result_json,source,decided_at FROM ai_actions ORDER BY created_at DESC LIMIT 50").all();
+  return c.json({ actions: results, enabled: !!c.env.GEMINI_API_KEY });
 });

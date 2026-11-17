@@ -19,6 +19,8 @@ export type Env = {
   ADMIN_EMAIL?: string;     // secret: where control-room login codes and alerts go
   TELEGRAM_BOT_TOKEN?: string; // secret: alerts + daily summary bot
   TELEGRAM_CHAT_ID?: string;   // secret: your chat with that bot
+  GEMINI_API_KEY?: string;     // secret: control-room assistant (free tier)
+  GEMINI_MODEL?: string;       // optional override, default gemini-flash-latest
   EMAIL_DNS_CHECK?: string; // "off" disables the MX lookup (tests only)
   DELIVERY_MODE?: string; // "console" = tests/local only (logs codes). Never set in production.
   EMAIL_FROM: string;     // e.g. "Klausum <otp@mail.klausum.study>"
