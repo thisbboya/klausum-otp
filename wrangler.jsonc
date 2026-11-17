@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
+  // Placement hint tested (azure:westeurope, next to D1): server time fell to ~30 ms but
+  // Ghana round trips got SLOWER (+30 ms on send) because of the extra edge→Azure hop.
+  // With every endpoint at one D1 round trip, running at the Accra edge is faster.
   "routes": [{ "pattern": "otp.klausum.study", "custom_domain": true }],
   // Daily cleanup at 03:17 UTC (uses 1 of the 5 free Cron Triggers)
   "triggers": { "crons": ["17 3 * * *"] },

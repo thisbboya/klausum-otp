@@ -39,5 +39,12 @@ Legend: ✅ verified from official page today · ⏳ not yet verified (will veri
 - ✅ RFC 6238: 30 s step, allow at most 1 step of drift; SHA-1 test vectors (seed `12345678901234567890`) pass in `test/totp.test.ts`, as do RFC 4226 HOTP vectors.
 - ✅ QR: **uqr** 0.1.3 (MIT, zero deps, ESM, `renderSVG`) — works in Workers. Note: bundle grew to ~887 KB (152 KB gzip), well under the 3 MB free limit.
 
+## Speed (checked 2026-11-17, Phase 7)
+- Worker runs at the **Accra (ACC)** edge; D1 primary is in **WEUR**. One ACC↔WEUR D1 round trip ≈ **120–130 ms** — that is the floor.
+- ✅ **Smart Placement / Placement Hints** are free on all plans — https://developers.cloudflare.com/workers/configuration/placement/ . Tested `azure:westeurope`: server time fell to ~30 ms but Ghana round trips got *slower* (send p50 158→190 ms) because of the extra edge→Azure hop. Not used.
+- ✅ **D1 read replication**: no Africa replicas (ENAM/WNAM/WEUR/EEUR/APAC/OC) and writes always go to the primary — https://developers.cloudflare.com/d1/best-practices/read-replication/ . Not useful here (every OTP call writes).
+- ✅ **Durable Objects** (free: SQLite-backed, 100k req/day, 100k rows written/day): `afr` location hint exists but "Durable Objects don't currently spawn in Africa" — falls back nearby — https://developers.cloudflare.com/durable-objects/reference/data-location/ . No gain.
+- **Conclusion:** with free Cloudflare storage, Ghana→service latency can't go below ~1 Europe round trip. We made every endpoint exactly **one** D1 round trip (TOTP verify: two, because it must decrypt the secret before the atomic replay check).
+
 ## Still to verify (in the phase that needs them)
-- ⏳ OWASP MFA cheat sheet (Phase 3 / Phase 7)
+- ✅ OWASP MFA cheat sheet — see docs/SECURITY.md

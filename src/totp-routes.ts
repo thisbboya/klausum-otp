@@ -3,7 +3,7 @@ import { z } from "zod";
 import { renderSVG } from "uqr";
 import type { Env } from "./index";
 import { preflight, requireApiKey, type Vars } from "./auth";
-import { hit } from "./ratelimit";
+import { counterStatements, evaluate } from "./ratelimit";
 import { hmacHex } from "./otp";
 import { base32Encode, matchStep, openSecret, otpauthUrl, sealSecret } from "./totp";
 
@@ -46,14 +46,20 @@ totp.post("/verify", async (c) => {
   const app = c.get("app");
 
   const refHash = (await hmacHex(c.env.OTP_PEPPER, `totp:${app.id}:${p.data.user_ref}`)).slice(0, 32);
-  const rl = await hit(c.env.DB, [{ key: `t600:${refHash}`, limit: 10, window: 600 }]);
+  // Round trip 1: rate counter + read the encrypted secret. (Round trip 2 is the atomic
+  // replay-protection update below — it needs the decrypted secret first.)
+  const rules = [{ key: `t600:${refHash}`, limit: 10, window: 600 }];
+  const now = nowS();
+  const [counter, sel] = await c.env.DB.batch([
+    ...counterStatements(c.env.DB, rules, now),
+    c.env.DB.prepare("SELECT secret_encrypted,last_used_step FROM totp_secrets WHERE app_id=? AND user_ref=?").bind(app.id, p.data.user_ref),
+  ]);
+  const rl = evaluate(rules, [counter], now);
   if (!rl.ok) {
     c.header("Retry-After", String(rl.retryAfter));
     return c.json({ error: "rate_limited", retry_after: rl.retryAfter }, 429);
   }
-
-  const row = await c.env.DB.prepare("SELECT secret_encrypted,last_used_step FROM totp_secrets WHERE app_id=? AND user_ref=?")
-    .bind(app.id, p.data.user_ref).first<{ secret_encrypted: string; last_used_step: number | null }>();
+  const row = sel.results[0] as { secret_encrypted: string; last_used_step: number | null } | undefined;
   if (!row) return c.json({ valid: false, reason: "invalid_code" });
 
   const key = await openSecret(c.env.TOTP_KEY, row.secret_encrypted, aadFor(app.id, p.data.user_ref));

@@ -2,8 +2,8 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
 import { preflight, requireApiKey, type AppRow, type Vars } from "./auth";
-import { randomString, timingSafeEqual } from "./crypto";
-import { hit } from "./ratelimit";
+import { randomString } from "./crypto";
+import { counterStatements, evaluate, withinLimitsSql } from "./ratelimit";
 import { deliver } from "./delivery";
 import {
   MAX_ATTEMPTS, codeHash, decryptRecipient, encryptRecipient, generateCode, hmacHex,
@@ -41,34 +41,44 @@ async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, pu
   const rh = await recipientHash(pepper, app.id, to);
   const ipHash = (await hmacHex(pepper, `ip:${c.req.header("CF-Connecting-IP") ?? "unknown"}`)).slice(0, 32);
 
-  const t0 = Date.now();
-  const rl = await hit(c.env.DB, [
+  const rules = [
     { key: `r30:${rh}`, limit: 1, window: 30 },
     { key: `r600:${rh}`, limit: 3, window: 600 },
     { key: `r1d:${rh}`, limit: 10, window: 86400 },
-    { key: `ip1h:${ipHash}`, limit: 20, window: 3600 },
+    // Test keys can't deliver anything, so they skip the per-IP limit (lets us benchmark).
+    ...(c.get("testMode") ? [] : [{ key: `ip1h:${ipHash}`, limit: 20, window: 3600 }]),
     { key: `app1d:${app.id}`, limit: app.daily_cap, window: 86400 },
-  ], now);
-  if (!rl.ok) return limited(c, rl.retryAfter);
-
+  ];
+  // Prepare everything first (cheap, local), then ONE D1 round trip:
+  // counters → (if within limits) invalidate old codes → (if within limits) insert new code.
   const code = generateCode();
   const id = `otp_${randomString(24)}`;
   const ttl = app.otp_ttl_seconds;
-  await c.env.DB.batch([
+  const [enc, ch] = await Promise.all([
+    encryptRecipient(pepper, fallbackEmail ? `${to}\n${fallbackEmail}` : to),
+    codeHash(pepper, app.id, id, code),
+  ]);
+  const ok = withinLimitsSql(rules);
+  const t0 = Date.now();
+  const res = await c.env.DB.batch([
+    ...counterStatements(c.env.DB, rules, now),
     // Rule 7: a new code kills every older live code for this recipient.
     c.env.DB.prepare(
-      "UPDATE otp_requests SET status='invalidated' WHERE app_id=? AND recipient_hash=? AND used_at IS NULL AND status IN ('queued','sent','delivered')",
-    ).bind(app.id, rh),
+      `UPDATE otp_requests SET status='invalidated'
+       WHERE app_id=? AND recipient_hash=? AND used_at IS NULL AND status IN ('queued','sent','delivered') AND ${ok.sql}`,
+    ).bind(app.id, rh, ...ok.binds),
     c.env.DB.prepare(
       `INSERT INTO otp_requests (id,app_id,recipient_hash,recipient_enc,channel,code_hash,expires_at,purpose,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-    ).bind(id, app.id, rh, await encryptRecipient(pepper, fallbackEmail ? `${to}\n${fallbackEmail}` : to), channel, await codeHash(pepper, app.id, rh, code), now + ttl, purpose, now),
+       SELECT ?,?,?,?,?,?,?,?,? WHERE ${ok.sql}`,
+    ).bind(id, app.id, rh, enc, channel, ch, now + ttl, purpose, now, ...ok.binds),
   ]);
   c.header("Server-Timing", `db;dur=${Date.now() - t0}`, { append: true });
+  const rl = evaluate(rules, res, now);
+  if (!rl.ok) return limited(c, rl.retryAfter);
 
   // Respond now; deliver after the response is sent.
   c.executionCtx.waitUntil(
-    deliver(c.env, { requestId: id, appName: app.display_name ?? app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash, fallbackEmail })
+    (c.get("testMode") ? markTest(c.env, id) : deliver(c.env, { requestId: id, appName: app.display_name ?? app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash, fallbackEmail }))
       .catch((e) => console.error("deliver failed", id, String(e))),
   );
   return c.json({ request_id: id, channel, expires_in: ttl, resend_after: RESEND_AFTER }, 202);
@@ -89,6 +99,10 @@ v1.post("/otp/send", async (c) => {
   return issue(c, c.get("app"), channel, to, purpose, fallback);
 });
 
+/** Test-key requests: record a fake successful delivery, send nothing. */
+const markTest = (env: Env, id: string) =>
+  env.DB.prepare("UPDATE otp_requests SET status='sent', provider='test' WHERE id=? AND status='queued'").bind(id).run();
+
 // ---------------------------------------------------------------------------
 type OtpRow = {
   id: string; app_id: string; recipient_hash: string; recipient_enc: string | null; channel: "email" | "sms";
@@ -107,28 +121,52 @@ v1.post("/otp/verify", async (c) => {
   const p = await body(c, verifySchema);
   if (!p.success) return bad(c);
   const app = c.get("app");
-  const row = await load(c, p.data.request_id);
+  const now = nowS();
+  // The code hash binds app + request + code, so we can compute the expected hash
+  // BEFORE reading anything and do the whole verify in ONE D1 round trip:
+  //   1. bump the per-recipient verify counter
+  //   2. if code matches (and live, unused, within limits) → mark used          (single use)
+  //   3. if code doesn't match (and live, within limits)  → attempts + 1        (attempt limit)
+  //   4. read the row's final state to pick the answer
+  // Statements run in order inside one transaction, so two concurrent verifies of the same
+  // code can't both succeed. The hash comparison happens in SQL; the values are HMACs the
+  // caller can't steer byte-by-byte, so equality timing reveals nothing useful.
+  const expected = await codeHash(c.env.OTP_PEPPER, app.id, p.data.request_id, p.data.code);
+  const live = `id=?1 AND app_id=?2 AND used_at IS NULL AND status!='invalidated' AND attempts < ${MAX_ATTEMPTS} AND expires_at > ?3
+    AND (SELECT count FROM rate_counters WHERE key = 'v600:' || otp_requests.recipient_hash) <= 10`;
+  const t0 = Date.now();
+  const [counter, ok, bump, state] = await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO rate_counters (key, count, window_start)
+         VALUES ('v600:' || COALESCE((SELECT recipient_hash FROM otp_requests WHERE id=?1 AND app_id=?2), 'unknown'), 1, ?3)
+       ON CONFLICT(key) DO UPDATE SET
+         count        = CASE WHEN ?3 < rate_counters.window_start + 600 THEN rate_counters.count + 1 ELSE 1 END,
+         window_start = CASE WHEN ?3 < rate_counters.window_start + 600 THEN rate_counters.window_start ELSE ?3 END
+       RETURNING count, window_start`,
+    ).bind(p.data.request_id, app.id, now),
+    c.env.DB.prepare(`UPDATE otp_requests SET used_at=?3, recipient_enc=NULL WHERE ${live} AND code_hash=?4 RETURNING 1 AS ok`)
+      .bind(p.data.request_id, app.id, now, expected),
+    c.env.DB.prepare(`UPDATE otp_requests SET attempts=attempts+1 WHERE ${live} AND code_hash!=?4 RETURNING attempts`)
+      .bind(p.data.request_id, app.id, now, expected),
+    c.env.DB.prepare("SELECT used_at, status, attempts, expires_at FROM otp_requests WHERE id=? AND app_id=?")
+      .bind(p.data.request_id, app.id),
+  ]);
+  c.header("Server-Timing", `db;dur=${Date.now() - t0}`, { append: true });
+
+  if (ok.results.length === 1) return c.json({ valid: true });
+  const row = state.results[0] as Pick<OtpRow, "used_at" | "status" | "attempts" | "expires_at"> | undefined;
   // Unknown / other app's / used / replaced → same answer, reveals nothing.
   if (!row || row.used_at !== null || row.status === "invalidated") return fail(c, "invalid_code");
-
-  const rl = await hit(c.env.DB, [{ key: `v600:${row.recipient_hash}`, limit: 10, window: 600 }]);
+  const rl = evaluate([{ key: "", limit: 10, window: 600 }], [counter], now);
   if (!rl.ok) return limited(c, rl.retryAfter);
-
-  if (row.attempts >= MAX_ATTEMPTS) return fail(c, "too_many_attempts", 0);
-  if (row.expires_at <= nowS()) return fail(c, "expired");
-
-  const expected = await codeHash(c.env.OTP_PEPPER, app.id, row.recipient_hash, p.data.code);
-  if (timingSafeEqual(expected, row.code_hash)) {
-    // Single use: only one concurrent verify can flip used_at.
-    const r = await c.env.DB.prepare(
-      "UPDATE otp_requests SET used_at=?, recipient_enc=NULL WHERE id=? AND used_at IS NULL AND attempts < ?",
-    ).bind(nowS(), row.id, MAX_ATTEMPTS).run();
-    return r.meta.changes === 1 ? c.json({ valid: true }) : fail(c, "invalid_code");
+  const bumped = bump.results[0] as { attempts: number } | undefined;
+  if (bumped) {
+    const left = Math.max(0, MAX_ATTEMPTS - bumped.attempts);
+    return left === 0 ? fail(c, "too_many_attempts", 0) : fail(c, "invalid_code", left);
   }
-  const upd = await c.env.DB.prepare("UPDATE otp_requests SET attempts=attempts+1 WHERE id=? RETURNING attempts")
-    .bind(row.id).first<{ attempts: number }>();
-  const left = Math.max(0, MAX_ATTEMPTS - (upd?.attempts ?? MAX_ATTEMPTS));
-  return left === 0 ? fail(c, "too_many_attempts", 0) : fail(c, "invalid_code", left);
+  if (row.attempts >= MAX_ATTEMPTS) return fail(c, "too_many_attempts", 0);
+  if (row.expires_at <= now) return fail(c, "expired");
+  return fail(c, "invalid_code");
 });
 
 // ---------------------------------------------------------------------------

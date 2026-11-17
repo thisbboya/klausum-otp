@@ -2,14 +2,28 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "./index";
 import { newApiKey, newId, sha256Hex, timingSafeEqual } from "./crypto";
+import { hit } from "./ratelimit";
 
 export const admin = new Hono<{ Bindings: Env }>();
 
 // Admin auth: "Authorization: Bearer <ADMIN_TOKEN>", compared in constant time.
+// Brute-force guard: 10 failed attempts per IP per hour, then locked out for the hour.
 admin.use("*", async (c, next) => {
+  const ip = (await sha256Hex(`adminip:${c.req.header("CF-Connecting-IP") ?? "unknown"}`)).slice(0, 32);
+  const key = `adm1h:${ip}`;
+  const now = Math.floor(Date.now() / 1000);
+  const locked = await c.env.DB.prepare("SELECT count, window_start FROM rate_counters WHERE key=?")
+    .bind(key).first<{ count: number; window_start: number }>();
+  if (locked && locked.count >= 10 && now < locked.window_start + 3600) {
+    c.header("Retry-After", String(locked.window_start + 3600 - now));
+    return c.json({ error: "rate_limited" }, 429);
+  }
   const got = (c.req.header("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   const want = c.env.ADMIN_TOKEN ?? "";
-  if (!want || !timingSafeEqual(got, want)) return c.json({ error: "unauthorized" }, 401);
+  if (!want || !timingSafeEqual(got, want)) {
+    await hit(c.env.DB, [{ key, limit: 10, window: 3600 }], now);
+    return c.json({ error: "unauthorized" }, 401);
+  }
   await next();
 });
 
@@ -22,6 +36,8 @@ const createApp = z
     daily_cap: z.number().int().min(1).max(10000).default(300),
     otp_ttl_seconds: z.number().int().min(60).max(600).default(300),
     sms_app_hash: z.string().regex(/^[A-Za-z0-9+/]{11}$/).optional(),
+    /** "test": key is kotp_test_…; codes are never delivered (for development and benchmarks). */
+    mode: z.enum(["live", "test"]).default("live"),
   })
   .strict();
 
@@ -32,7 +48,7 @@ admin.post("/apps", async (c) => {
   }
   const a = parsed.data;
   const id = newId("app");
-  const key = newApiKey("live");
+  const key = newApiKey(a.mode);
   const now = Math.floor(Date.now() / 1000);
   try {
     await c.env.DB.prepare(
