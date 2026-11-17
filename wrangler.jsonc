@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "klausum-otp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+  // Custom domain — Cloudflare creates the DNS record + certificate for you.
+  // Requires klausum.study to be on Cloudflare DNS.
+  "routes": [{ "pattern": "otp.klausum.study", "custom_domain": true }]
+}
