@@ -66,7 +66,7 @@ async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, pu
 
   // Respond now; deliver after the response is sent.
   c.executionCtx.waitUntil(
-    deliver(c.env, { requestId: id, appName: app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash })
+    deliver(c.env, { requestId: id, appName: app.display_name ?? app.name, channel, to, code, ttl, smsAppHash: app.sms_app_hash })
       .catch((e) => console.error("deliver failed", id, String(e))),
   );
   return c.json({ request_id: id, channel, expires_in: ttl, resend_after: RESEND_AFTER }, 202);

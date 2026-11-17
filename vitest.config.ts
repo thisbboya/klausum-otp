@@ -9,7 +9,7 @@ export default defineConfig(async () => {
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
           // Test-only values; real secrets live in Cloudflare (wrangler secret put).
-          bindings: { ADMIN_TOKEN: "test-admin-token", OTP_PEPPER: "test-pepper-0123456789abcdef", DELIVERY_MODE: "console", TEST_MIGRATIONS: migrations },
+          bindings: { ADMIN_TOKEN: "test-admin-token", OTP_PEPPER: "test-pepper-0123456789abcdef", DELIVERY_MODE: "console", EMAIL_FROM: "Klausum <otp@mail.klausum.study>", TEST_MIGRATIONS: migrations },
         },
       }),
     ],

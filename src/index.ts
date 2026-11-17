@@ -6,7 +6,11 @@ export type Env = {
   DB: D1Database;
   ADMIN_TOKEN: string;
   OTP_PEPPER: string;
-  DELIVERY_MODE?: string; // "console" = Phase 3 test provider (logs codes!). Removed in Phase 4.
+  DELIVERY_MODE?: string; // "console" = tests/local only (logs codes). Never set in production.
+  EMAIL_FROM: string;     // e.g. "Klausum <otp@mail.klausum.study>"
+  RESEND_API_KEY?: string;
+  AHASEND_API_KEY?: string;
+  AHASEND_ACCOUNT_ID?: string;
 };
 
 export const app = new Hono<{ Bindings: Env }>();

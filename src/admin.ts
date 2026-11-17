@@ -17,6 +17,7 @@ const origin = z.string().regex(/^https?:\/\/[a-z0-9.-]+(:\d+)?$/i, "must be an 
 const createApp = z
   .object({
     name: z.string().regex(/^[a-z0-9][a-z0-9-]{1,39}$/, "lowercase letters, digits, dashes"),
+    display_name: z.string().min(1).max(40).optional(),
     allowed_origins: z.array(origin).max(20).default([]),
     daily_cap: z.number().int().min(1).max(10000).default(300),
     otp_ttl_seconds: z.number().int().min(60).max(600).default(300),
@@ -35,10 +36,10 @@ admin.post("/apps", async (c) => {
   const now = Math.floor(Date.now() / 1000);
   try {
     await c.env.DB.prepare(
-      `INSERT INTO apps (id,name,api_key_hash,api_key_prefix,allowed_origins,daily_cap,otp_ttl_seconds,sms_app_hash,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`
+      `INSERT INTO apps (id,name,display_name,api_key_hash,api_key_prefix,allowed_origins,daily_cap,otp_ttl_seconds,sms_app_hash,created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`
     )
-      .bind(id, a.name, await sha256Hex(key), key.slice(0, 14), JSON.stringify(a.allowed_origins),
+      .bind(id, a.name, a.display_name ?? null, await sha256Hex(key), key.slice(0, 14), JSON.stringify(a.allowed_origins),
             a.daily_cap, a.otp_ttl_seconds, a.sms_app_hash ?? null, now)
       .run();
   } catch (e) {
