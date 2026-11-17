@@ -4,7 +4,7 @@ import { sha256Hex } from "./crypto";
 
 export type AppRow = {
   id: string; name: string; allowed_origins: string[]; daily_cap: number;
-  otp_ttl_seconds: number; sms_app_hash: string | null; status: string;
+  otp_ttl_seconds: number; sms_app_hash: string | null; status: string; display_name: string | null;
 };
 export type Vars = { app: AppRow };
 
@@ -22,7 +22,7 @@ export const requireApiKey: MiddlewareHandler<{ Bindings: Env; Variables: Vars }
   let hitc = cache.get(hash);
   if (!hitc || hitc.until < Date.now()) {
     const row = await c.env.DB.prepare(
-      "SELECT id,name,allowed_origins,daily_cap,otp_ttl_seconds,sms_app_hash,status FROM apps WHERE api_key_hash=?",
+      "SELECT id,name,display_name,allowed_origins,daily_cap,otp_ttl_seconds,sms_app_hash,status FROM apps WHERE api_key_hash=?",
     ).bind(hash).first<Omit<AppRow, "allowed_origins"> & { allowed_origins: string }>();
     hitc = { app: row ? { ...row, allowed_origins: JSON.parse(row.allowed_origins) } : null, until: Date.now() + CACHE_MS };
     cache.set(hash, hitc);
