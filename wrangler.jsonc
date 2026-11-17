@@ -21,5 +21,27 @@
       "database_id": "5d79963c-8ded-4f50-b9b2-913e353aaa6c",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  // Staging: its own Worker, database and secrets, at otp-staging.klausum.study.
+  // Deploy with `npx wrangler deploy --env staging` (CI does this for every pull request).
+  // No cron triggers here: production already uses 3 of the account's 5 free ones.
+  "env": {
+    "staging": {
+      "name": "klausum-otp-staging",
+      "routes": [{ "pattern": "otp-staging.klausum.study", "custom_domain": true }],
+      "triggers": { "crons": [] },
+      "vars": {
+        "EMAIL_FROM": "Klausum Staging <otp@mail.klausum.study>",
+        "AHASEND_ACCOUNT_ID": "6fbd608c-7b79-4076-aa41-7022602b5f90"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "klausum-otp-staging",
+          "database_id": "857d3414-dcbc-4013-af11-34918436d088",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }
