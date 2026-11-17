@@ -8,6 +8,7 @@ import { hmacHex, mask, normaliseEmail, normalisePhone } from "./otp";
 import { clearAuthCache } from "./auth";
 import { readSession } from "./session";
 import { enrollTotpCore } from "./cores";
+import { dailySummary, notify, selfCheck } from "./monitor";
 import { OWNER_REF, SYSTEM_APP } from "./admin-login";
 
 export const admin = new Hono<{ Bindings: Env }>();
@@ -258,3 +259,8 @@ admin.post("/owner-totp/enroll", async (c) => {
   if ("alreadyEnrolled" in r) return c.json({ error: "already_enrolled", hint: "send {\"reset\":true} to replace it" }, 409);
   return c.json({ otpauth_url: r.otpauthUrl, qr_svg: r.qrSvg, secret: r.secret }, 201);
 });
+
+// ---- monitoring (run on demand from the control room / CLI) --------------------
+admin.post("/monitor/check", async (c) => c.json(await selfCheck(c.env)));
+admin.post("/monitor/test-alert", async (c) => c.json(await notify(c.env, "Klausum OTP: test alert", "If you can read this, alerts reach you. ✅")));
+admin.post("/monitor/daily-summary", async (c) => c.json(await dailySummary(c.env)));

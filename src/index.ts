@@ -5,13 +5,20 @@ import { totp } from "./totp-routes";
 import { DASHBOARD_CSS, DASHBOARD_HTML, DASHBOARD_JS } from "./dashboard";
 import { CONTROL_HTML, CONTROL_JS } from "./control";
 import { adminLogin } from "./admin-login";
+import { dailySummary, selfCheck } from "./monitor";
+
+// Must match wrangler.jsonc "triggers.crons" (3 of the 5 free Cron Triggers).
+export const CRON_SELF_CHECK = "*/15 * * * *";
+export const CRON_DAILY = "0 8 * * *"; // 08:00 UTC = 08:00 Ghana
 
 export type Env = {
   DB: D1Database;
   ADMIN_TOKEN: string;
   OTP_PEPPER: string;
   TOTP_KEY: string;
-  ADMIN_EMAIL?: string;     // secret: where control-room login codes go
+  ADMIN_EMAIL?: string;     // secret: where control-room login codes and alerts go
+  TELEGRAM_BOT_TOKEN?: string; // secret: alerts + daily summary bot
+  TELEGRAM_CHAT_ID?: string;   // secret: your chat with that bot
   EMAIL_DNS_CHECK?: string; // "off" disables the MX lookup (tests only)
   DELIVERY_MODE?: string; // "console" = tests/local only (logs codes). Never set in production.
   EMAIL_FROM: string;     // e.g. "Klausum <otp@mail.klausum.study>"
@@ -61,7 +68,9 @@ app.onError((err, c) => {
 
 export default {
   fetch: app.fetch,
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(cleanup(env));
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    if (event.cron === CRON_SELF_CHECK) ctx.waitUntil(selfCheck(env).then((r) => console.log("self-check", JSON.stringify(r))));
+    else if (event.cron === CRON_DAILY) ctx.waitUntil(dailySummary(env).then((r) => console.log("daily summary", JSON.stringify(r))));
+    else ctx.waitUntil(cleanup(env));
   },
 } satisfies ExportedHandler<Env>;
