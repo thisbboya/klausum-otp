@@ -8,6 +8,7 @@ export type Env = {
   ADMIN_TOKEN: string;
   OTP_PEPPER: string;
   TOTP_KEY: string;
+  EMAIL_DNS_CHECK?: string; // "off" disables the MX lookup (tests only)
   DELIVERY_MODE?: string; // "console" = tests/local only (logs codes). Never set in production.
   EMAIL_FROM: string;     // e.g. "Klausum <otp@mail.klausum.study>"
   RESEND_API_KEY?: string;

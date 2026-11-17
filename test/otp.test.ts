@@ -317,3 +317,14 @@ describe("verify concurrency", () => {
     expect((await verify(k.key, r1.json.request_id, c1)).json.valid).toBe(true);
   });
 });
+
+describe("X-End-User-IP", () => {
+  it("per-IP limit follows the forwarded user IP, not the app server's IP", async () => {
+    const k = await makeApp();
+    const sendAs = (to: string, userIp: string) => call(k.key, "POST", "/v1/otp/send", { channel: "email", to }, { ip: "198.51.100.250", "X-End-User-IP": userIp });
+    for (let i = 0; i < 20; i++) expect((await sendAs(`u${i}@b.co`, "41.66.0.1")).res.status).toBe(202);
+    expect((await sendAs("u20@b.co", "41.66.0.1")).res.status).toBe(429); // same student over the limit
+    expect((await sendAs("u21@b.co", "41.66.0.2")).res.status).toBe(202); // a different student is fine
+    expect((await call(k.key, "POST", "/v1/otp/send", { channel: "email", to: "z@b.co" }, { ip: "198.51.100.251", "X-End-User-IP": "not-an-ip" })).res.status).toBe(202);
+  });
+});
