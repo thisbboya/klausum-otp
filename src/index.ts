@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { admin } from "./admin";
 import { v1, cleanup } from "./routes";
+import { totp } from "./totp-routes";
 
 export type Env = {
   DB: D1Database;
   ADMIN_TOKEN: string;
   OTP_PEPPER: string;
+  TOTP_KEY: string;
   DELIVERY_MODE?: string; // "console" = tests/local only (logs codes). Never set in production.
   EMAIL_FROM: string;     // e.g. "Klausum <otp@mail.klausum.study>"
   RESEND_API_KEY?: string;
@@ -32,6 +34,7 @@ app.use("*", async (c, next) => {
 
 app.get("/health", (c) => c.json({ ok: true }));
 app.route("/admin", admin);
+app.route("/v1/totp", totp);
 app.route("/v1", v1);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
