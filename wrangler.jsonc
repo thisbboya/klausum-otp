@@ -7,7 +7,10 @@
   "routes": [{ "pattern": "otp.klausum.study", "custom_domain": true }],
   // Daily cleanup at 03:17 UTC (uses 1 of the 5 free Cron Triggers)
   "triggers": { "crons": ["17 3 * * *"] },
-  "vars": { "EMAIL_FROM": "Klausum <otp@mail.klausum.study>" },
+  "vars": {
+    "EMAIL_FROM": "Klausum <otp@mail.klausum.study>",
+    "AHASEND_ACCOUNT_ID": "6fbd608c-7b79-4076-aa41-7022602b5f90"
+  },
   "d1_databases": [
     {
       "binding": "DB",
