@@ -1,0 +1,46 @@
+# One-click rollback: Actions → Rollback → Run workflow.
+# Leave "version" empty to go back to the previous version, or paste a version id
+# (see `npx wrangler deployments list`). Database changes are NOT rolled back — see docs/RUNBOOK.md.
+name: Rollback
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which Worker
+        type: choice
+        options: [production, staging]
+        default: production
+      version:
+        description: Version id to go back to (empty = previous version)
+        required: false
+      reason:
+        description: Why (shown in Cloudflare)
+        required: true
+        default: rollback
+permissions: { contents: read }
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Roll back
+        env:
+          TARGET: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          NAME=klausum-otp; [ "$TARGET" = staging ] && NAME=klausum-otp-staging
+          if [ -n "$VERSION" ]; then
+            [[ "$VERSION" =~ ^[0-9a-f-]{36}$ ]] || { echo "version must be a version id"; exit 1; }
+            npx wrangler rollback "$VERSION" --name "$NAME" --message "$REASON" -y
+          else
+            npx wrangler rollback --name "$NAME" --message "$REASON" -y
+          fi
+          npx wrangler deployments list --name "$NAME" | head -30

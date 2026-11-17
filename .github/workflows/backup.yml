@@ -1,0 +1,39 @@
+# Weekly encrypted backup of the production database (Sundays 02:00 UTC, or run by hand).
+# The export is gzipped and encrypted with AES-256 (openssl, PBKDF2) using BACKUP_PASSPHRASE,
+# which only you have. Kept as a workflow artifact for 90 days. The database holds no plain
+# codes, recipients or API keys (only hashes / encrypted values) — and no secrets are exported.
+# Restore: docs/RESTORE.md
+name: Backup
+on:
+  schedule: [{ cron: "0 2 * * 0" }]
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Export, compress, encrypt
+        run: |
+          test -n "$BACKUP_PASSPHRASE" || { echo "BACKUP_PASSPHRASE secret missing"; exit 1; }
+          STAMP=$(date -u +%Y-%m-%d)
+          npx wrangler d1 export klausum-otp --remote --output db.sql
+          test -s db.sql
+          gzip -9 db.sql
+          openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -in db.sql.gz -out "klausum-otp-$STAMP.sql.gz.enc" -pass env:BACKUP_PASSPHRASE
+          shred -u db.sql.gz 2>/dev/null || rm -f db.sql.gz
+          ls -la klausum-otp-*.enc
+          echo "FILE=klausum-otp-$STAMP.sql.gz.enc" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FILE }}
+          path: ${{ env.FILE }}
+          retention-days: 90
+          if-no-files-found: error
