@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Env } from "./index";
 import { newApiKey, newId, sha256Hex, timingSafeEqual } from "./crypto";
 import { hit } from "./ratelimit";
+import { buildStats } from "./stats";
 
 export const admin = new Hono<{ Bindings: Env }>();
 
@@ -72,3 +73,5 @@ admin.get("/apps", async (c) => {
   ).all<Record<string, unknown> & { allowed_origins: string }>();
   return c.json({ apps: results.map((r) => ({ ...r, allowed_origins: JSON.parse(r.allowed_origins) })) });
 });
+
+admin.get("/stats", async (c) => c.json(await buildStats(c.env.DB)));
