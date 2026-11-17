@@ -1,12 +1,15 @@
 import { Hono } from "hono";
 import { admin } from "./admin";
+import { v1, cleanup } from "./routes";
 
 export type Env = {
   DB: D1Database;
   ADMIN_TOKEN: string;
+  OTP_PEPPER: string;
+  DELIVERY_MODE?: string; // "console" = Phase 3 test provider (logs codes!). Removed in Phase 4.
 };
 
-const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>();
 
 // Security headers + Server-Timing on every response
 app.use("*", async (c, next) => {
@@ -18,11 +21,12 @@ app.use("*", async (c, next) => {
   c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   c.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
   c.header("Cache-Control", "no-store");
-  c.header("Server-Timing", `total;dur=${Date.now() - t0}`);
+  c.header("Server-Timing", `total;dur=${Date.now() - t0}`, { append: true });
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
 app.route("/admin", admin);
+app.route("/v1", v1);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 app.onError((err, c) => {
@@ -30,4 +34,9 @@ app.onError((err, c) => {
   return c.json({ error: "internal_error" }, 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(cleanup(env));
+  },
+} satisfies ExportedHandler<Env>;

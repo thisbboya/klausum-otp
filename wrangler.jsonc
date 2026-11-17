@@ -5,6 +5,10 @@
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
   "routes": [{ "pattern": "otp.klausum.study", "custom_domain": true }],
+  // Daily cleanup at 03:17 UTC (uses 1 of the 5 free Cron Triggers)
+  "triggers": { "crons": ["17 3 * * *"] },
+  // Phase 3 only: "console" logs codes to Workers Logs for testing. Phase 4 removes it.
+  "vars": { "DELIVERY_MODE": "console" },
   "d1_databases": [
     {
       "binding": "DB",
