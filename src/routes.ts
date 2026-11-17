@@ -7,6 +7,7 @@ import { counterStatements, evaluate, withinLimitsSql } from "./ratelimit";
 import { deliver } from "./delivery";
 import { checkEmail } from "./email-check";
 import { statStmt } from "./stats";
+import { verifyOtpCore } from "./cores";
 import { blockHash } from "./admin";
 import {
   MAX_ATTEMPTS, codeHash, decryptRecipient, encryptRecipient, generateCode, hmacHex,
@@ -155,56 +156,13 @@ const fail = (c: C, reason: "invalid_code" | "expired" | "too_many_attempts", at
 v1.post("/otp/verify", async (c) => {
   const p = await body(c, verifySchema);
   if (!p.success) return bad(c);
-  const app = c.get("app");
-  const now = nowS();
-  // The code hash binds app + request + code, so we can compute the expected hash
-  // BEFORE reading anything and do the whole verify in ONE D1 round trip:
-  //   1. bump the per-recipient verify counter
-  //   2. if code matches (and live, unused, within limits) → mark used          (single use)
-  //   3. if code doesn't match (and live, within limits)  → attempts + 1        (attempt limit)
-  //   4. read the row's final state to pick the answer
-  // Statements run in order inside one transaction, so two concurrent verifies of the same
-  // code can't both succeed. The hash comparison happens in SQL; the values are HMACs the
-  // caller can't steer byte-by-byte, so equality timing reveals nothing useful.
-  const expected = await codeHash(c.env.OTP_PEPPER, app.id, p.data.request_id, p.data.code);
-  const live = `id=?1 AND app_id=?2 AND used_at IS NULL AND status!='invalidated' AND attempts < ${MAX_ATTEMPTS} AND expires_at > ?3
-    AND (SELECT count FROM rate_counters WHERE key = 'v600:' || otp_requests.recipient_hash) <= 10`;
   const t0 = Date.now();
-  const [counter, ok, bump, state] = await c.env.DB.batch([
-    c.env.DB.prepare(
-      `INSERT INTO rate_counters (key, count, window_start)
-         VALUES ('v600:' || COALESCE((SELECT recipient_hash FROM otp_requests WHERE id=?1 AND app_id=?2), 'unknown'), 1, ?3)
-       ON CONFLICT(key) DO UPDATE SET
-         count        = CASE WHEN ?3 < rate_counters.window_start + 600 THEN rate_counters.count + 1 ELSE 1 END,
-         window_start = CASE WHEN ?3 < rate_counters.window_start + 600 THEN rate_counters.window_start ELSE ?3 END
-       RETURNING count, window_start`,
-    ).bind(p.data.request_id, app.id, now),
-    c.env.DB.prepare(`UPDATE otp_requests SET used_at=?3, recipient_enc=NULL WHERE ${live} AND code_hash=?4 RETURNING 1 AS ok`)
-      .bind(p.data.request_id, app.id, now, expected),
-    c.env.DB.prepare(`UPDATE otp_requests SET attempts=attempts+1 WHERE ${live} AND code_hash!=?4 RETURNING attempts`)
-      .bind(p.data.request_id, app.id, now, expected),
-    c.env.DB.prepare("SELECT used_at, status, attempts, expires_at FROM otp_requests WHERE id=? AND app_id=?")
-      .bind(p.data.request_id, app.id),
-  ]);
+  const v = await verifyOtpCore(c.env, c.get("app").id, p.data.request_id, p.data.code); // ONE D1 round trip
   c.header("Server-Timing", `db;dur=${Date.now() - t0}`, { append: true });
-
+  if ("rateLimited" in v) return limited(c, v.retryAfter);
   // Count the outcome for the dashboard (after responding; never slows the answer).
-  const countVerify = (good: boolean) => c.executionCtx.waitUntil(statStmt(c.env.DB, good ? "verify:ok" : "verify:fail").run().catch(() => {}));
-  if (ok.results.length === 1) { countVerify(true); return c.json({ valid: true }); }
-  countVerify(false);
-  const row = state.results[0] as Pick<OtpRow, "used_at" | "status" | "attempts" | "expires_at"> | undefined;
-  // Unknown / other app's / used / replaced → same answer, reveals nothing.
-  if (!row || row.used_at !== null || row.status === "invalidated") return fail(c, "invalid_code");
-  const rl = evaluate([{ key: "", limit: 10, window: 600 }], [counter], now);
-  if (!rl.ok) return limited(c, rl.retryAfter);
-  const bumped = bump.results[0] as { attempts: number } | undefined;
-  if (bumped) {
-    const left = Math.max(0, MAX_ATTEMPTS - bumped.attempts);
-    return left === 0 ? fail(c, "too_many_attempts", 0) : fail(c, "invalid_code", left);
-  }
-  if (row.attempts >= MAX_ATTEMPTS) return fail(c, "too_many_attempts", 0);
-  if (row.expires_at <= now) return fail(c, "expired");
-  return fail(c, "invalid_code");
+  c.executionCtx.waitUntil(statStmt(c.env.DB, v.valid ? "verify:ok" : "verify:fail").run().catch(() => {}));
+  return v.valid ? c.json({ valid: true }) : fail(c, v.reason, v.attemptsLeft);
 });
 
 // ---------------------------------------------------------------------------

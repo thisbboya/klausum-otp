@@ -7,6 +7,8 @@ import { buildStats } from "./stats";
 import { hmacHex, mask, normaliseEmail, normalisePhone } from "./otp";
 import { clearAuthCache } from "./auth";
 import { readSession } from "./session";
+import { enrollTotpCore } from "./cores";
+import { OWNER_REF, SYSTEM_APP } from "./admin-login";
 
 export const admin = new Hono<{ Bindings: Env }>();
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -91,7 +93,7 @@ admin.get("/apps", async (c) => {
     `SELECT a.id,a.name,a.display_name,a.allowed_origins,a.daily_cap,a.otp_ttl_seconds,a.sms_app_hash,a.status,a.created_at,
             (SELECT MAX(last_used_at) FROM api_keys k WHERE k.app_id=a.id) AS key_last_used_at,
             (SELECT COUNT(*) FROM api_keys k WHERE k.app_id=a.id AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?)) AS active_keys
-     FROM apps a ORDER BY a.created_at`,
+     FROM apps a WHERE a.id != 'app_system_admin' ORDER BY a.created_at`,
   ).bind(nowS()).all<Record<string, unknown> & { allowed_origins: string }>();
   return c.json({ apps: results.map((r) => ({ ...r, allowed_origins: JSON.parse(r.allowed_origins) })) });
 });
@@ -244,3 +246,15 @@ admin.get("/logs", async (c) => {
 });
 
 admin.get("/stats", async (c) => c.json(await buildStats(c.env.DB)));
+
+// ---- owner authenticator (control-room 2nd factor) ---------------------------
+// Needs the ADMIN_TOKEN itself (a control-room session is NOT enough), so a stolen
+// session can never swap in the attacker's own authenticator. {reset:true} replaces a lost one.
+admin.post("/owner-totp/enroll", async (c) => {
+  if (!(c.req.header("Authorization") ?? "").startsWith("Bearer ")) return c.json({ error: "token_required" }, 403);
+  const { reset } = (await c.req.json().catch(() => ({}))) as { reset?: boolean };
+  if (reset) await c.env.DB.prepare("DELETE FROM totp_secrets WHERE app_id=? AND user_ref=?").bind(SYSTEM_APP, OWNER_REF).run();
+  const r = await enrollTotpCore(c.env, SYSTEM_APP, OWNER_REF, "Klausum OTP admin");
+  if ("alreadyEnrolled" in r) return c.json({ error: "already_enrolled", hint: "send {\"reset\":true} to replace it" }, 409);
+  return c.json({ otpauth_url: r.otpauthUrl, qr_svg: r.qrSvg, secret: r.secret }, 201);
+});
