@@ -53,11 +53,12 @@ export const recipientHash = (pepper: string, appId: string, recipient: string) 
   hmacHex(pepper, `rcpt:${appId}:${recipient}`);
 
 /**
- * Code hash. Binds app + recipient + code. We bind the recipient through its HMAC
- * (recipient_hash) so verify can recompute it without decrypting the recipient.
+ * Code hash: HMAC(pepper, app + request_id + code). Binding to the request (which itself
+ * belongs to one recipient) means verify can compute the expected hash before touching the
+ * database — and a code is only ever valid for the exact request it was issued for.
  */
-export const codeHash = (pepper: string, appId: string, rcptHash: string, code: string) =>
-  hmacHex(pepper, `code:${appId}:${rcptHash}:${code}`);
+export const codeHash = (pepper: string, appId: string, requestId: string, code: string) =>
+  hmacHex(pepper, `code:${appId}:${requestId}:${code}`);
 
 const b64 = (b: Uint8Array) => btoa(String.fromCharCode(...b));
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));

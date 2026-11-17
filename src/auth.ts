@@ -6,7 +6,8 @@ export type AppRow = {
   id: string; name: string; allowed_origins: string[]; daily_cap: number;
   otp_ttl_seconds: number; sms_app_hash: string | null; status: string; display_name: string | null;
 };
-export type Vars = { app: AppRow };
+/** testMode: key is kotp_test_… — everything runs, but nothing is delivered. */
+export type Vars = { app: AppRow; testMode: boolean };
 
 // Small per-isolate cache: saves a D1 read (and ~5–20 ms) on most requests.
 // Trade-off: pausing an app or revoking a key takes up to 60 s to apply everywhere.
@@ -38,6 +39,7 @@ export const requireApiKey: MiddlewareHandler<{ Bindings: Env; Variables: Vars }
     c.header("Vary", "Origin");
   }
   c.set("app", app);
+  c.set("testMode", m[1].startsWith("kotp_test_"));
   await next();
 };
 

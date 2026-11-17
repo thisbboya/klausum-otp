@@ -60,7 +60,7 @@ describe("send", () => {
     expect(JSON.stringify(row)).not.toContain("sadick@gmail.com");
     const rh = await recipientHash(env.OTP_PEPPER, A.id, "sadick@gmail.com");
     expect(row!.recipient_hash).toBe(rh);
-    expect(row!.code_hash).toBe(await codeHash(env.OTP_PEPPER, A.id, rh, code));
+    expect(row!.code_hash).toBe(await codeHash(env.OTP_PEPPER, A.id, json.request_id, code));
     expect(row!.status).toBe("sent");
     expect(row!.provider).toBe("console");
   });
@@ -148,6 +148,16 @@ describe("rate limits", () => {
     expect(r.ok).toBe(false);
     expect(r.retryAfter).toBe(28);
     expect((await hit(env.DB, rule, 1059)).ok).toBe(true);  // 30 s after the first hit
+  });
+
+  it("a rate-limited send writes no row and does not kill the live code", async () => {
+    const first = await send(A.key, "keep@b.co");
+    const code = lastCode();
+    const before = await env.DB.prepare("SELECT COUNT(*) n FROM otp_requests").first<{ n: number }>();
+    expect((await send(A.key, "keep@b.co")).res.status).toBe(429);
+    const after = await env.DB.prepare("SELECT COUNT(*) n FROM otp_requests").first<{ n: number }>();
+    expect(after!.n).toBe(before!.n);
+    expect((await verify(A.key, first.json.request_id, code)).json.valid).toBe(true);
   });
 
   it("per recipient: 3 per 10 min and 10 per day", async () => {
@@ -270,5 +280,40 @@ describe("helpers", () => {
     // Guard rail: the bundle that runs in the Worker must not call Math.random for secrets.
     const files = import.meta.glob("../src/*.ts", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
     for (const [f, src] of Object.entries(files)) expect(src, f).not.toMatch(/Math\.random\s*\(/);
+  });
+});
+
+describe("test keys (kotp_test_)", () => {
+  it("run the full flow but never deliver, and skip the per-IP limit", async () => {
+    const key = newApiKey("test");
+    await env.DB.prepare("INSERT INTO apps (id,name,api_key_hash,api_key_prefix,created_at) VALUES (?,?,?,?,0)")
+      .bind(`app_${randomString(20)}`, `tk-${randomString(6).toLowerCase()}`, await sha256Hex(key), key.slice(0, 14)).run();
+    const before = testOutbox.length;
+    const st = [];
+    for (let i = 0; i < 22; i++) st.push((await send(key, `bench${i}@b.co`, {}, "198.51.100.200")).res.status);
+    expect(st.every((s) => s === 202)).toBe(true); // a live key would hit 429 at #21
+    expect(testOutbox.length).toBe(before); // nothing went to any provider
+    const { json } = await send(key, "status@b.co", {}, "198.51.100.200");
+    expect((await call(key, "GET", `/v1/otp/status/${json.request_id}`)).json.provider).toBe("test");
+  });
+});
+
+describe("verify concurrency", () => {
+  it("two simultaneous verifies of the right code: exactly one succeeds", async () => {
+    clearAuthCache(); await env.DB.exec("DELETE FROM rate_counters");
+    const k = await makeApp();
+    const { json } = await send(k.key, "race@b.co");
+    const code = lastCode();
+    const [a, b] = await Promise.all([verify(k.key, json.request_id, code), verify(k.key, json.request_id, code)]);
+    expect([a.json.valid, b.json.valid].sort()).toEqual([false, true]);
+  });
+  it("a code for one request does not work on another request for the same person", async () => {
+    clearAuthCache(); await env.DB.exec("DELETE FROM rate_counters");
+    const k = await makeApp();
+    const r1 = await send(k.key, "bind@b.co"); const c1 = lastCode();
+    await env.DB.exec("DELETE FROM rate_counters");
+    const r2 = await send(k.key, "bind2@b.co");
+    expect((await verify(k.key, r2.json.request_id, c1)).json.valid).toBe(c1 === lastCode());
+    expect((await verify(k.key, r1.json.request_id, c1)).json.valid).toBe(true);
   });
 });

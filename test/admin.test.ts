@@ -42,3 +42,15 @@ describe("POST /admin/apps", () => {
     expect((await call("not json")).status).toBe(400);
   });
 });
+
+describe("admin brute-force guard", () => {
+  it("locks an IP out after 10 wrong tokens, even for the right token", async () => {
+    await env.DB.exec("DELETE FROM rate_counters WHERE key LIKE 'adm1h:%'");
+    const h = (t: string) => ({ Authorization: `Bearer ${t}`, "CF-Connecting-IP": "203.0.113.99" });
+    for (let i = 0; i < 10; i++) expect((await SELF.fetch("https://otp.test/admin/apps", { headers: h("wrong") })).status).toBe(401);
+    expect((await SELF.fetch("https://otp.test/admin/apps", { headers: h("wrong") })).status).toBe(429);
+    expect((await SELF.fetch("https://otp.test/admin/apps", { headers: h("test-admin-token") })).status).toBe(429);
+    const other = await SELF.fetch("https://otp.test/admin/apps", { headers: { ...h("test-admin-token"), "CF-Connecting-IP": "203.0.113.100" } });
+    expect(other.status).toBe(200);
+  });
+});
