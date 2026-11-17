@@ -5,6 +5,7 @@ import { preflight, requireApiKey, type AppRow, type Vars } from "./auth";
 import { randomString } from "./crypto";
 import { counterStatements, evaluate, withinLimitsSql } from "./ratelimit";
 import { deliver } from "./delivery";
+import { checkEmail } from "./email-check";
 import {
   MAX_ATTEMPTS, codeHash, decryptRecipient, encryptRecipient, generateCode, hmacHex,
   normaliseEmail, normalisePhone, recipientHash,
@@ -16,6 +17,18 @@ v1.use("*", preflight);
 v1.use("*", requireApiKey);
 
 const RESEND_AFTER = 30;
+
+/**
+ * The person's IP for the per-IP limit. Apps that call us from their own server (as they
+ * should) pass their user's IP in X-End-User-IP; otherwise every user of that app would
+ * share the server's IP and hit the limit together. Only well-formed IPs are accepted.
+ * (A misbehaving app could vary it, but it's still bound by recipient + app daily caps.)
+ */
+const IP_RE = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f:]{2,39})$/i;
+function endUserIp(c: C): string {
+  const fwd = c.req.header("X-End-User-IP")?.trim();
+  return fwd && IP_RE.test(fwd) ? `user:${fwd}` : c.req.header("CF-Connecting-IP") ?? "unknown";
+}
 const nowS = () => Math.floor(Date.now() / 1000);
 const bad = (c: C) => c.json({ error: "invalid_request" }, 400);
 const limited = (c: C, retryAfter: number) => {
@@ -39,7 +52,7 @@ async function issue(c: C, app: AppRow, channel: "email" | "sms", to: string, pu
   const pepper = c.env.OTP_PEPPER;
   const now = nowS();
   const rh = await recipientHash(pepper, app.id, to);
-  const ipHash = (await hmacHex(pepper, `ip:${c.req.header("CF-Connecting-IP") ?? "unknown"}`)).slice(0, 32);
+  const ipHash = (await hmacHex(pepper, `ip:${endUserIp(c)}`)).slice(0, 32);
 
   const rules = [
     { key: `r30:${rh}`, limit: 1, window: 30 },
@@ -95,6 +108,14 @@ v1.post("/otp/send", async (c) => {
     if (channel !== "sms") return bad(c);
     fallback = normaliseEmail(p.data.fallback_email);
     if (!fallback) return bad(c);
+  }
+  // Only real mailboxes: no disposable/temporary providers, and the domain must receive mail.
+  // (Test keys skip only the DNS part, so benchmarks can use made-up domains.)
+  const dns = c.env.EMAIL_DNS_CHECK !== "off" && !c.get("testMode");
+  for (const addr of [channel === "email" ? to : null, fallback]) {
+    if (!addr) continue;
+    const v = await checkEmail(addr, { dns });
+    if (!v.ok) return c.json({ error: "email_not_allowed", reason: v.reason }, 400);
   }
   return issue(c, c.get("app"), channel, to, purpose, fallback);
 });
