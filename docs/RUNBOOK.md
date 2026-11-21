@@ -20,7 +20,7 @@ live logs `npx wrangler tail klausum-otp`, Cloudflare dashboard → Workers & Pa
 - **Fix:** in Cloudflare DNS make sure these exist and are **DNS only** (grey cloud): `resend._domainkey.mail`, `send.mail` (MX + TXT), `ahasend._domainkey.mail`, `psrp.mail`, TXT `mail` (SPF), `_dmarc` and `_dmarc.mail`. Keep the email plain (no images/links). Ask a few users to mark it "Not spam".
 - **Tell users:** "Check Spam/Promotions and mark our email as not spam."
 
-## 3. textbee SMS phone offline
+## 3. SMS phone offline (SMSGate or textbee — currently not switched on)
 - **Notice:** alert "SMS phone silent for N min"; SMS logs `failed`.
 - **Confirm:** textbee dashboard → Devices → last heartbeat; or open the textbee app on the phone.
 - **Fix:** follow [SMS-PHONE.md](SMS-PHONE.md): charger, Wi-Fi/data, open textbee, battery optimisation off. Meanwhile SMS codes fall back to email when the app sent a `fallback_email`. To stop trying SMS: `npm run admin -- provider:disable textbee`.
@@ -58,6 +58,16 @@ live logs `npx wrangler tail klausum-otp`, Cloudflare dashboard → Workers & Pa
 - **Confirm:** https://www.cloudflarestatus.com · `npx wrangler d1 execute klausum-otp --remote --command "SELECT 1"` · `npx wrangler tail klausum-otp`.
 - **Fix:** if Cloudflare has an incident, wait. If we hit the free daily write limit (100 000 rows), it resets 00:00 UTC — find the cause as in §5. If data is damaged, restore ([RESTORE.md](RESTORE.md)).
 - **Tell users:** "Codes are temporarily unavailable; please use Google sign-in."
+
+## 9. The assistant says it "couldn't reach Gemini"
+- **Notice:** the Assistant tab answers with that line.
+- **Confirm:** `npx wrangler tail klausum-otp` while asking it something; look for `Gemini 4xx/5xx`.
+- **Fix:** `503`/`429` = Google's free tier is busy or today's limit is used up. It already retries and falls back to lighter models, so wait a few minutes. `400`/`403` = bad or revoked key: make a new one at aistudio.google.com, then `npx wrangler secret put GEMINI_API_KEY`. The rest of the control room works without it.
+
+## 10. Phone checks (Telegram / WhatsApp) stuck on "Waiting…"
+- **Telegram:** `curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo`: `url` must be `https://otp.klausum.study/hooks/telegram` and `last_error_message` empty. To reset it, see [PHONE-CHECK.md](PHONE-CHECK.md).
+- **WhatsApp:** Meta app → WhatsApp → Configuration: webhook `https://otp.klausum.study/hooks/whatsapp`, subscribed to **messages**. A `401` in the logs means `WHATSAPP_APP_SECRET` is wrong.
+- **Tell users:** "Try the other button (Telegram / WhatsApp), or try again in a minute."
 
 ## Useful commands
 ```bash

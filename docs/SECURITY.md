@@ -71,9 +71,31 @@ and skip only the per-IP limit. Used for development and benchmarks. Test: `test
 | CI can't be hijacked through commit text | ✅ | Untrusted values go through `env:`, never inline `${{ }}` in `run:` | review of `.github/workflows` |
 | Backups | ✅ | Weekly, AES-256 + PBKDF2, 90 days; restore drill passed 2026-11-17 | `docs/RESTORE.md` |
 
+## Phone checks (Telegram / WhatsApp)
+
+| Rule | Status | How | Test |
+|------|--------|-----|------|
+| Only the user's own number counts (Telegram) | ✅ | `contact.user_id` must equal the sender's id; forwarded contacts are refused | `refuses someone else's contact` |
+| Webhooks can't be forged | ✅ | Telegram: `X-Telegram-Bot-Api-Secret-Token` (constant-time); WhatsApp: `X-Hub-Signature-256` HMAC of the raw body with the app secret | `bad webhook secret`, `ignores unsigned calls` |
+| Start tokens and codes stored hashed, single use, 10 min | ✅ | sha256 in `phone_checks`; a row flips to `verified` once and is deleted after a day | `phone.test.ts` |
+| One app can't read another app's checks | ✅ | status lookup filtered by app id | `hides other apps' checks` |
+| The website ties a check to the signed-in user | ✅ | Klausum signs `user|check` with an HMAC ticket before polling | Klausum `notify.functions.ts` |
+| We never message users on WhatsApp | ✅ | incoming messages only (free); nothing is sent back | review |
+
+## Control-room AI assistant
+
+| Rule | Status | How | Test |
+|------|--------|-----|------|
+| Acts alone only on safe actions | ✅ | `SAFE_TOOLS` = reads, self-check, block, move provider later; the rest wait as `pending_approval` until you tap Approve | `assistant.test.ts` |
+| Every action logged and announced | ✅ | `ai_actions` table + Telegram | `assistant.test.ts` |
+| Never sees codes, recipients or secrets | ✅ | `redact()` strips emails, phone numbers and API keys from text (numbers stay numbers) | `redact` tests |
+| A rotated key is never stored | ✅ | result saved as `[shown once]` | `assistant.test.ts` |
+
 ## Known gaps / accepted
 
 - **TOTP_KEY** rotation needs re-enrolment (no dual-key re-encryption script) — accepted: rotate only after a leak. See ROTATION.md.
 - **OTP_PEPPER** rotation has no dual-pepper window — accepted: codes live 5 minutes; users just ask for a new one.
 - **Latency targets** (send < 150 ms, verify < 80 ms from Ghana) are not met: ~155 ms p50 for both, bounded by one round trip to D1 in Western Europe (no free African region). See RESEARCH.md.
-- **SMS** (textbee) is built and tested but not switched on.
+- **SMS** (SMSGate / textbee) is built and tested but not switched on: Google Play Protect blocks SMS-gateway apps installed from outside the Play Store on the owner's phone.
+- **WhatsApp phone check** is built and tested but waits on Meta business setup.
+- **Telegram bot name** is the alerts bot (`@klausum_otp_alerts_bot`); users see it during phone checks.
