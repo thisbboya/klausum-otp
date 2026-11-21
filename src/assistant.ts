@@ -19,11 +19,14 @@ const MAX_ROUNDS = 4;
 
 /** Strip anything that could identify a person before it goes to the AI. */
 export function redact(v: unknown): unknown {
-  const s = JSON.stringify(v ?? null)
+  // Only text values are cleaned; numbers (timestamps, ratios) pass through untouched.
+  if (typeof v === "string") return v
     .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email]")
     .replace(/\+?\d[\d\s-]{7,}\d/g, "[number]")
     .replace(/kotp_(live|test)_[A-Za-z0-9]{8,}/g, "[api key]");
-  return JSON.parse(s);
+  if (Array.isArray(v)) return v.map(redact);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redact(x)]));
+  return v ?? null;
 }
 
 const S = { type: "STRING" } as const;

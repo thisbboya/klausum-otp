@@ -75,6 +75,7 @@ describe("assistant", () => {
     expect(sent).not.toContain("victim@example.com");
     expect(sent).not.toContain("233241234567");
     expect(redact({ e: "a@b.co kotp_live_ABCDEFGHIJKLMNOP" })).toEqual({ e: "[email] [api key]" });
+    expect(redact({ r: 0.123456789, t: 1795265000, s: "call 024 123 4567" })).toEqual({ r: 0.123456789, t: 1795265000, s: "call [number]" });
   });
 
   it("is reachable only for the owner", async () => {
