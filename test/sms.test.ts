@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { deliver, type Message } from "../src/delivery";
 import { smsText } from "../src/sms";
-import { app } from "../src/index";
+import { app } from "../src/app";
 import { clearAuthCache } from "../src/auth";
 import { newApiKey, randomString, sha256Hex } from "../src/crypto";
 

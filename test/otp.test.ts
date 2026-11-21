@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { env, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { app } from "../src/index";
+import { app } from "../src/app";
 import { testOutbox } from "../src/delivery";
 import { clearAuthCache } from "../src/auth";
 import { newApiKey, sha256Hex, randomString } from "../src/crypto";
