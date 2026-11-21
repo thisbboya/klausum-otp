@@ -78,7 +78,17 @@ type GeminiPart = { text?: string; functionCall?: { name: string; args?: Record<
 type GeminiContent = { role: "user" | "model"; parts: GeminiPart[] };
 
 async function gemini(env: Env, system: string, contents: GeminiContent[], withTools: boolean): Promise<GeminiPart[]> {
-  const model = env.GEMINI_MODEL || "gemini-flash-latest";
+  // Free-tier models are often briefly overloaded (503/429): try the main model twice, then lighter backups.
+  const models = [env.GEMINI_MODEL || "gemini-flash-latest", env.GEMINI_MODEL || "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash"];
+  let last: unknown;
+  for (const m of models) {
+    try { return await geminiOnce(env, m, system, contents, withTools); }
+    catch (e) { last = e; if (!/Gemini (429|500|503|504)|timeout|aborted/i.test(String(e))) throw e; }
+  }
+  throw last;
+}
+
+async function geminiOnce(env: Env, model: string, system: string, contents: GeminiContent[], withTools: boolean): Promise<GeminiPart[]> {
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY! },
@@ -88,7 +98,7 @@ async function gemini(env: Env, system: string, contents: GeminiContent[], withT
       ...(withTools ? { tools: [{ functionDeclarations: TOOL_NAMES.map((name) => ({ name, ...DECLS[name] })) }] } : {}),
       generationConfig: { temperature: 0.2, maxOutputTokens: 900 },
     }),
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(12_000),
   });
   if (!r.ok) throw new Error(`Gemini ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const j = (await r.json()) as { candidates?: { content?: { parts?: GeminiPart[] } }[] };
