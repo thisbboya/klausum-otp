@@ -24,7 +24,8 @@
   "triggers": { "crons": ["17 3 * * *", "*/15 * * * *", "0 8 * * *"] },
   "vars": {
     "EMAIL_FROM": "Klausum <otp@mail.klausum.study>",
-    "AHASEND_ACCOUNT_ID": "6fbd608c-7b79-4076-aa41-7022602b5f90"
+    "AHASEND_ACCOUNT_ID": "6fbd608c-7b79-4076-aa41-7022602b5f90",
+    "TELEGRAM_BOT_USERNAME": "klausum_otp_alerts_bot"
   },
   "d1_databases": [
     {
