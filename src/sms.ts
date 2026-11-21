@@ -37,3 +37,34 @@ export async function sendTextbee(env: Env, to: string, text: string): Promise<S
   if (r.ok && !/"success"\s*:\s*false/.test(body)) return { ok: true };
   return { ok: false, quota: r.status === 429, error: `textbee ${r.status}: ${body}` };
 }
+
+const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u));
+
+/**
+ * SMSGate passphrase encryption (AES-256-CBC, PBKDF2-SHA1, salt doubles as IV, PKCS#7):
+ * "$aes-256-cbc/pbkdf2-sha1$i=<n>$<b64 salt>$<b64 data>". The relay never sees the number or code.
+ */
+export async function smsGateEncryptor(passphrase: string, iterations: number) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-1", salt, iterations }, base, { name: "AES-CBC", length: 256 }, false, ["encrypt"]);
+  return async (plain: string) => {
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv: salt }, key, new TextEncoder().encode(plain)));
+    return `$aes-256-cbc/pbkdf2-sha1$i=${iterations}$${b64(salt)}$${b64(ct)}`;
+  };
+}
+
+/** SMSGate (open-source Android gateway on your own phone) via its cloud relay, end-to-end encrypted. */
+export async function sendSmsGate(env: Env, to: string, text: string): Promise<SendResult> {
+  if (!env.SMSGATE_USER || !env.SMSGATE_PASS || !env.SMSGATE_PASSPHRASE) return { ok: false, quota: false, error: "smsgate not configured" };
+  const enc = await smsGateEncryptor(env.SMSGATE_PASSPHRASE, Number(env.SMSGATE_ITERATIONS) || 75000);
+  const r = await fetch("https://api.sms-gate.app/3rdparty/v1/messages", {
+    method: "POST",
+    headers: { Authorization: `Basic ${btoa(`${env.SMSGATE_USER}:${env.SMSGATE_PASS}`)}`, "Content-Type": "application/json", "User-Agent": "klausum-otp/1.0" },
+    body: JSON.stringify({ textMessage: { text: await enc(text) }, phoneNumbers: [await enc(to)], isEncrypted: true, withDeliveryReport: true, ttl: 300 }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = (await r.text().catch(() => "")).slice(0, 300);
+  if (r.ok && !/"state"\s*:\s*"Failed"/.test(body)) return { ok: true };
+  return { ok: false, quota: r.status === 429, error: `smsgate ${r.status}: ${body}` };
+}

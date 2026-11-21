@@ -103,6 +103,50 @@ describe("SMS delivery via textbee", () => {
   });
 });
 
+describe("SMS delivery via SMSGate (end-to-end encrypted)", () => {
+  const gate = { ...live, TEXTBEE_API_KEY: undefined, SMSGATE_USER: "u", SMSGATE_PASS: "p", SMSGATE_PASSPHRASE: "correct horse battery staple", SMSGATE_ITERATIONS: "1000" };
+  async function decrypt(s: string, pass: string) {
+    const [, alg, it, salt, data] = s.split("$");
+    expect(alg).toBe("aes-256-cbc/pbkdf2-sha1");
+    const iv = Uint8Array.from(atob(salt), (c) => c.charCodeAt(0));
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+    const key = await crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-1", salt: iv, iterations: Number(it.slice(2)) }, base, { name: "AES-CBC", length: 256 }, false, ["decrypt"]);
+    return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-CBC", iv }, key, Uint8Array.from(atob(data), (c) => c.charCodeAt(0))));
+  }
+
+  it("sends only encrypted number and text, which decrypt with the passphrase", async () => {
+    calls = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
+      calls.push({ url: String(input), headers: init?.headers ?? {}, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({ id: "m1", state: "Pending" }), { status: 202 });
+    });
+    const m = await newRequest();
+    await deliver(gate as any, m);
+    expect(calls[0].url).toBe("https://api.sms-gate.app/3rdparty/v1/messages");
+    expect(calls[0].headers.Authorization).toBe(`Basic ${btoa("u:p")}`);
+    const b = calls[0].body;
+    expect(b.isEncrypted).toBe(true);
+    expect(JSON.stringify(b)).not.toContain("482913");
+    expect(JSON.stringify(b)).not.toContain("241234567");
+    expect(await decrypt(b.phoneNumbers[0], gate.SMSGATE_PASSPHRASE)).toBe("+233241234567");
+    expect(await decrypt(b.textMessage.text, gate.SMSGATE_PASSPHRASE)).toBe(smsText("Meraaba", "482913", 300, "FA+9qCX9VSu"));
+    expect(await row(m.requestId)).toEqual({ status: "sent", provider: "smsgate" });
+  });
+
+  it("falls back to email when SMSGate fails", async () => {
+    mockFetch({ textbee: ok, resend: ok, ahasend: ok });
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any, init?: any) => {
+      const url = String(input);
+      calls.push({ url, headers: {}, body: null });
+      return url.includes("sms-gate") ? new Response("down", { status: 502 }) : ok();
+    });
+    const m = await newRequest("farmer@example.com");
+    await deliver(gate as any, m);
+    expect(calls.map((c) => c.url)).toEqual(["https://api.sms-gate.app/3rdparty/v1/messages", "https://api.resend.com/emails"]);
+    expect(await row(m.requestId)).toEqual({ status: "sent", provider: "resend (sms fallback)" });
+  });
+});
+
 describe("API: fallback_email", () => {
   async function call(key: string, body: unknown) {
     const ctx = createExecutionContext();

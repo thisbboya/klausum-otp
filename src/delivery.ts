@@ -2,7 +2,7 @@ import type { Env } from "./index";
 import { mask } from "./otp";
 import { newId } from "./crypto";
 import { EMAIL_PROVIDERS, otpEmail, type SendResult } from "./email";
-import { sendTextbee, smsText } from "./sms";
+import { sendSmsGate, sendTextbee, smsText } from "./sms";
 import { statStmt } from "./stats";
 import { DEFAULT_PROVIDERS, type ProviderSettings } from "./admin";
 
@@ -81,7 +81,11 @@ export async function deliver(env: Env, m: Message): Promise<void> {
     provider = await tryProviders(env, emailProviders(env, m.to, m), attempts);
   } else {
     const text = smsText(m.appName, m.code, m.ttl, m.smsAppHash);
-    provider = await tryProviders(env, [{ name: "textbee", send: () => sendTextbee(env, m.to, text) }], attempts);
+    // SMSGate (your own phone, end-to-end encrypted) first; textbee only if still configured.
+    provider = await tryProviders(env, [
+      { name: "smsgate", send: () => sendSmsGate(env, m.to, text) },
+      ...(env.TEXTBEE_API_KEY ? [{ name: "textbee", send: () => sendTextbee(env, m.to, text) }] : []),
+    ], attempts);
     if (!provider && m.fallbackEmail) {
       const p = await tryProviders(env, emailProviders(env, m.fallbackEmail, m), attempts);
       if (p) provider = `${p} (sms fallback)`;

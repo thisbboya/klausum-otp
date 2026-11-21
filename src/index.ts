@@ -23,6 +23,10 @@ export type Env = {
   RESEND_API_KEY?: string;
   AHASEND_API_KEY?: string;
   AHASEND_ACCOUNT_ID?: string;
+  SMSGATE_USER?: string;       // secret: SMSGate cloud username (shown in the app)
+  SMSGATE_PASS?: string;       // secret: SMSGate cloud password
+  SMSGATE_PASSPHRASE?: string; // secret: end-to-end passphrase, also entered in the app
+  SMSGATE_ITERATIONS?: string; // PBKDF2 rounds, must match the app (default 75000)
   TEXTBEE_API_KEY?: string;
   TEXTBEE_DEVICE_ID?: string;
 };
