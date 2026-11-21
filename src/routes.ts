@@ -192,5 +192,6 @@ export async function cleanup(env: Env) {
     env.DB.prepare("DELETE FROM otp_requests WHERE created_at < ?").bind(now - 86400),
     env.DB.prepare("DELETE FROM delivery_logs WHERE created_at < ?").bind(now - 30 * 86400),
     env.DB.prepare("DELETE FROM rate_counters WHERE window_start < ?").bind(now - 2 * 86400),
+    env.DB.prepare("DELETE FROM phone_checks WHERE created_at < ?").bind(now - 86400),
   ]);
 }

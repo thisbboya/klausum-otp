@@ -15,7 +15,12 @@ export type Env = {
   ADMIN_EMAIL?: string;     // secret: where control-room login codes and alerts go
   TELEGRAM_BOT_TOKEN?: string; // secret: alerts + daily summary bot
   TELEGRAM_CHAT_ID?: string;   // secret: your chat with that bot
-  GEMINI_API_KEY?: string;     // secret: control-room assistant (free tier)
+  TELEGRAM_BOT_USERNAME?: string;   // var: the bot's @name, for t.me links
+  TELEGRAM_WEBHOOK_SECRET?: string; // secret: Telegram sends it on every webhook call
+  WHATSAPP_NUMBER?: string;         // var: your WhatsApp Business number (digits)
+  WHATSAPP_APP_SECRET?: string;     // secret: Meta app secret, signs webhook calls
+  WHATSAPP_VERIFY_TOKEN?: string;   // secret: Meta webhook subscribe handshake
+  GEMINI_API_KEY?: string;    // secret: control-room assistant (free tier)
   GEMINI_MODEL?: string;       // optional override, default gemini-flash-latest
   EMAIL_DNS_CHECK?: string; // "off" disables the MX lookup (tests only)
   DELIVERY_MODE?: string; // "console" = tests/local only (logs codes). Never set in production.

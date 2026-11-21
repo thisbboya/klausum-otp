@@ -53,7 +53,7 @@ export type VerifyOtpResult =
 export type DeliveryStatus = "queued" | "sent" | "delivered" | "failed";
 export interface StatusResult { requestId: string; channel: Channel; status: DeliveryStatus; provider: string | null }
 
-export type OtpErrorCode = "invalid_request" | "email_not_allowed" | "blocked" | "unauthorized" | "rate_limited" | "not_found" | "origin_not_allowed" | "network" | "server_error";
+export type OtpErrorCode = "invalid_request" | "email_not_allowed" | "blocked" | "unauthorized" | "rate_limited" | "not_found" | "origin_not_allowed" | "method_unavailable" | "network" | "server_error";
 
 /** Thrown for anything that isn't a normal answer. `retryAfter` is set on `rate_limited`. */
 export class OtpError extends Error {
@@ -70,9 +70,23 @@ export interface OtpClient {
   verifyOtp(input: { requestId: string; code: string }): Promise<VerifyOtpResult>;
   resendOtp(input: { requestId: string; endUserIp?: string }): Promise<SendOtpResult>;
   getStatus(requestId: string): Promise<StatusResult>;
+  /** Free phone check: the user confirms their number in Telegram or WhatsApp (no SMS). */
+  startPhoneCheck(input: { method: PhoneMethod }): Promise<PhoneCheckStart>;
+  getPhoneCheck(requestId: string): Promise<PhoneCheckStatus>;
 }
 
-const KNOWN: OtpErrorCode[] = ["invalid_request", "email_not_allowed", "blocked", "unauthorized", "rate_limited", "not_found", "origin_not_allowed"];
+export type PhoneMethod = "telegram" | "whatsapp";
+export interface PhoneCheckStart {
+  requestId: string; method: PhoneMethod;
+  /** Open this for the user (t.me or wa.me link). */
+  link: string;
+  /** WhatsApp only: the code inside the pre-filled message, to show as a backup. */
+  code?: string; message?: string;
+  expiresIn: number;
+}
+export type PhoneCheckStatus = { status: "pending" | "expired" } | { status: "verified"; phone: string };
+
+const KNOWN: OtpErrorCode[] = ["invalid_request", "email_not_allowed", "blocked", "unauthorized", "rate_limited", "not_found", "origin_not_allowed", "method_unavailable"];
 
 export function createOtpClient(opts: OtpClientOptions): OtpClient {
   if (!/^kotp_(live|test)_[A-Za-z0-9]{32}$/.test(opts.apiKey ?? "")) throw new Error("Klausum OTP: apiKey must be a kotp_live_… or kotp_test_… key");
@@ -128,6 +142,14 @@ export function createOtpClient(opts: OtpClientOptions): OtpClient {
       const r = await call<{ request_id: string; channel: Channel; status: DeliveryStatus; provider: string | null }>(
         "GET", `/v1/otp/status/${encodeURIComponent(id)}`);
       return { requestId: r.request_id, channel: r.channel, status: r.status, provider: r.provider };
+    },
+    async startPhoneCheck(i) {
+      const r = await call<{ request_id: string; method: PhoneMethod; link: string; code?: string; message?: string; expires_in: number }>(
+        "POST", "/v1/phone/start", { method: i.method });
+      return { requestId: r.request_id, method: r.method, link: r.link, ...(r.code ? { code: r.code, message: r.message } : {}), expiresIn: r.expires_in };
+    },
+    async getPhoneCheck(id) {
+      return call<PhoneCheckStatus>("GET", `/v1/phone/status/${encodeURIComponent(id)}`);
     },
   };
 }

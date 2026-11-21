@@ -7,6 +7,7 @@ import type { Env } from "./index";
 import { admin } from "./admin";
 import { v1 } from "./routes";
 import { totp } from "./totp-routes";
+import { hooks, phone } from "./phone";
 import { adminLogin } from "./admin-login";
 import { STATUS_CSS, STATUS_HTML, STATUS_JS, statusData } from "./status";
 
@@ -48,6 +49,8 @@ app.get("/dashboard", (c) => c.redirect("/admin", 301));
 app.route("/auth/admin", adminLogin);
 app.route("/admin", admin);
 app.route("/v1/totp", totp);
+app.route("/v1/phone", phone);
+app.route("/hooks", hooks);
 app.route("/v1", v1);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
