@@ -10,6 +10,9 @@ import { readSession } from "./session";
 import { enrollTotpCore } from "./cores";
 import { dailySummary, notify, selfCheck } from "./monitor";
 import { OWNER_REF, SYSTEM_APP } from "./admin-login";
+import { HANDBOOK, entryFor } from "./handbook";
+import { isToolName, runTool } from "./assistant-tools";
+import { chat, decide } from "./assistant";
 
 export const admin = new Hono<{ Bindings: Env }>();
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -274,4 +277,60 @@ admin.post("/secrets/rotated", async (c) => {
   await c.env.DB.prepare("INSERT INTO settings (key,value,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
     .bind(`secret:${p.data.name}`, String(now), now).run();
   return c.json({ name: p.data.name, setAt: now });
+});
+
+// ---- Fixes (handbook-driven) and one-tap actions ------------------------------------
+admin.get("/handbook", (c) => c.json({ entries: HANDBOOK.map(({ match: _m, ...e }) => e) }));
+
+admin.get("/fixes", async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT key, value FROM settings WHERE key LIKE 'alert:%' OR key LIKE 'ai_diagnosis:%'").all<{ key: string; value: string }>();
+  const diag = new Map(results.filter((r) => r.key.startsWith("ai_diagnosis:")).map((r) => [r.key.slice(13), r.value]));
+  const fixes = results.filter((r) => r.key.startsWith("alert:")).map((r) => {
+    const alertKey = r.key.slice(6);
+    return { alertKey, since: Number(r.value), entry: entryFor(alertKey), aiDiagnosis: diag.get(alertKey) ?? null };
+  });
+  return c.json({ fixes });
+});
+
+/** The owner runs any action (from Fixes, the Assistant's Approve button, or Settings). */
+admin.post("/actions/run", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as { tool?: unknown; args?: unknown } | null;
+  if (!b || !isToolName(b.tool)) return c.json({ error: "invalid_request", issues: ["tool: unknown action"] }, 400);
+  const args = b.args && typeof b.args === "object" ? (b.args as Record<string, unknown>) : {};
+  try {
+    return c.json({ result: await runTool(c.env, b.tool, args) });
+  } catch (e) {
+    return c.json({ error: "action_failed", message: String((e as Error).message ?? e).slice(0, 200) }, 400);
+  }
+});
+
+// ---- assistant ---------------------------------------------------------------------
+admin.post("/assistant", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as { messages?: unknown } | null;
+  const msgs = Array.isArray(b?.messages) ? b!.messages : [];
+  const clean = msgs
+    .filter((m): m is { role: string; text: string } => !!m && typeof m === "object" && typeof (m as any).text === "string")
+    .map((m) => ({ role: m.role === "model" ? ("model" as const) : ("user" as const), text: m.text }))
+    .slice(-12);
+  if (!clean.length || clean.at(-1)!.role !== "user") return c.json({ error: "invalid_request", issues: ["messages: last one must be from the user"] }, 400);
+  try {
+    return c.json(await chat(c.env, clean));
+  } catch (e) {
+    console.error("assistant", e);
+    return c.json({ reply: "The assistant couldn't reach Gemini just now. Try again in a minute.", actions: [] });
+  }
+});
+admin.post("/assistant/approve", async (c) => {
+  const { id } = (await c.req.json().catch(() => ({}))) as { id?: string };
+  const r = await decide(c.env, String(id ?? ""), true);
+  return "error" in r ? c.json(r, 400) : c.json(r);
+});
+admin.post("/assistant/cancel", async (c) => {
+  const { id } = (await c.req.json().catch(() => ({}))) as { id?: string };
+  const r = await decide(c.env, String(id ?? ""), false);
+  return "error" in r ? c.json(r, 400) : c.json(r);
+});
+admin.get("/assistant/actions", async (c) => {
+  const { results } = await c.env.DB.prepare("SELECT id,created_at,tool,args_json,status,result_json,source,decided_at FROM ai_actions ORDER BY created_at DESC LIMIT 50").all();
+  return c.json({ actions: results, enabled: !!c.env.GEMINI_API_KEY });
 });

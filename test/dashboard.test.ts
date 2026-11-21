@@ -5,14 +5,10 @@ import { buildStats, statStmt, utcDay } from "../src/stats";
 beforeEach(() => env.DB.exec("DELETE FROM stats_daily"));
 
 describe("dashboard", () => {
-  it("serves the page with a strict CSP and no inline script", async () => {
-    const r = await SELF.fetch("https://otp.test/dashboard");
-    expect(r.status).toBe(200);
-    const html = await r.text();
-    expect(html).toContain('<script src="/dashboard.js"');
-    expect(html).not.toMatch(/<script>(?!\s*<\/script>)/);
-    expect(r.headers.get("content-security-policy")).toContain("script-src 'self'");
-    expect((await SELF.fetch("https://otp.test/dashboard.js")).headers.get("content-type")).toContain("javascript");
+  it("the old /dashboard page redirects to the new control room", async () => {
+    const r = await SELF.fetch("https://otp.test/dashboard", { redirect: "manual" });
+    expect(r.status).toBe(301);
+    expect(r.headers.get("location")).toBe("/admin");
   });
 
   it("/admin/stats needs the admin token", async () => {

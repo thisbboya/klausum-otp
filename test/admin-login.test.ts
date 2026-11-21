@@ -78,10 +78,9 @@ describe("control-room login", () => {
     expect(out.headers.get("set-cookie")).toMatch(/Max-Age=0/);
   });
 
-  it("serves the control-room page without auth, with a strict CSP", async () => {
-    const r = await SELF.fetch("https://otp.test/admin");
-    expect(r.status).toBe(200);
-    expect(await r.text()).toContain('<script src="/control.js"');
-    expect(r.headers.get("content-security-policy")).toContain("script-src 'self'");
+  it("the control-room page is a static file (no auth needed to load it), the API under it still needs auth", async () => {
+    expect((await SELF.fetch("https://otp.test/admin/stats")).status).toBe(401);
+    const page = await SELF.fetch("https://otp.test/admin");
+    expect(page.status).not.toBe(401);
   });
 });

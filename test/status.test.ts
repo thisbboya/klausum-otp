@@ -30,8 +30,9 @@ describe("status page", () => {
     const page = await SELF.fetch("https://status.klausum.study/");
     expect(page.status).toBe(200);
     expect(await page.text()).toContain('src="/status.js"');
-    const api = await SELF.fetch("https://otp.klausum.study/");
-    expect(((await api.json()) as any).status).toBe("https://status.klausum.study");
+    const site = await SELF.fetch("https://otp.klausum.study/"); // the website (static asset), not the status page
+    expect(site.status).toBe(200);
+    expect(await site.text()).not.toContain('src="/status.js"');
     expect((await SELF.fetch("https://otp.klausum.study/status.json")).status).toBe(200);
   });
 });
